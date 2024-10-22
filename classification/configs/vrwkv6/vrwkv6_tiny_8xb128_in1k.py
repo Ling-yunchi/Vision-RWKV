@@ -13,7 +13,7 @@ model = dict(
         img_size=224,
         patch_size=16,
         embed_dims=192,
-        num_heads=3,),
+        num_heads=3, ),
     neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='LinearClsHead',

@@ -374,7 +374,7 @@ class ParserCephImage(Parser):
             if split == 'train':
                 self.io_backend = 'petrel'
                 with open(osp.join(annotation_root, '22k_class_to_idx.json'),
-                        'r') as f:
+                          'r') as f:
                     self.class_to_idx = json.loads(f.read())
                 with open(osp.join(annotation_root, '22k_label.txt'), 'r') as f:
                     self.samples = f.read().splitlines()
@@ -382,7 +382,7 @@ class ParserCephImage(Parser):
                 raise NotImplementedError
         elif '47k' in split:  # bb47k
             self.io_backend = 'petrel'
-            with open(osp.join(annotation_root, '47k_class_to_idx.json'),'r') as f:
+            with open(osp.join(annotation_root, '47k_class_to_idx.json'), 'r') as f:
                 self.class_to_idx = json.loads(f.read())
             with open(osp.join(annotation_root, '47k_label.txt'), 'r') as f:
                 self.samples = f.read().splitlines()
@@ -391,7 +391,7 @@ class ParserCephImage(Parser):
             self.class_to_idx = None
             with open(osp.join(annotation_root, f'{split}.txt'), 'r') as f:
                 self.samples = f.read().splitlines()
-        
+
         self.split = split
         local_rank = None
         local_size = None
@@ -443,7 +443,7 @@ class ParserCephImage(Parser):
 
         # subsample
         indices = indices[self.rank // self.num_parts:self.
-                          total_size_parts:self.num_replicas // self.num_parts]
+        total_size_parts:self.num_replicas // self.num_parts]
         assert len(indices) == self.num_samples
 
         if self.file_client is None:

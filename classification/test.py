@@ -21,7 +21,9 @@ from mmcls.utils import (auto_select_device, get_root_logger,
 import mmcls_custom
 
 import urllib3
+
 urllib3.disable_warnings()
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
@@ -35,18 +37,18 @@ def parse_args():
         default=['all'],
         choices=out_options + ['none', 'all'],
         help='Besides metrics, what items will be included in the output '
-        f'result file. You can choose some of ({", ".join(out_options)}), '
-        'or use "all" to include all above, or use "none" to disable all of '
-        'above. Defaults to output all.',
+             f'result file. You can choose some of ({", ".join(out_options)}), '
+             'or use "all" to include all above, or use "none" to disable all of '
+             'above. Defaults to output all.',
         metavar='')
     parser.add_argument(
         '--metrics',
         type=str,
         nargs='+',
         help='evaluation metrics, which depends on the dataset, e.g., '
-        '"accuracy", "precision", "recall", "f1_score", "support" for single '
-        'label dataset, and "mAP", "CP", "CR", "CF1", "OP", "OR", "OF1" for '
-        'multi-label dataset')
+             '"accuracy", "precision", "recall", "f1_score", "support" for single '
+             'label dataset, and "mAP", "CP", "CR", "CF1", "OP", "OR", "OF1" for '
+             'multi-label dataset')
     parser.add_argument('--show', action='store_true', help='show results')
     parser.add_argument(
         '--show-dir', help='directory where painted images will be saved')
@@ -60,37 +62,37 @@ def parse_args():
         nargs='+',
         action=DictAction,
         help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file. If the value to '
-        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
-        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
-        'Note that the quotation marks are necessary and that no white space '
-        'is allowed.')
+             'in xxx=yyy format will be merged into config file. If the value to '
+             'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+             'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+             'Note that the quotation marks are necessary and that no white space '
+             'is allowed.')
     parser.add_argument(
         '--metric-options',
         nargs='+',
         action=DictAction,
         default={},
         help='custom options for evaluation, the key-value pair in xxx=yyy '
-        'format will be parsed as a dict metric_options for dataset.evaluate()'
-        ' function.')
+             'format will be parsed as a dict metric_options for dataset.evaluate()'
+             ' function.')
     parser.add_argument(
         '--show-options',
         nargs='+',
         action=DictAction,
         help='custom options for show_result. key-value pair in xxx=yyy.'
-        'Check available options in `model.show_result`.')
+             'Check available options in `model.show_result`.')
     parser.add_argument(
         '--gpu-ids',
         type=int,
         nargs='+',
         help='(Deprecated, please use --gpu-id) ids of gpus to use '
-        '(only applicable to non-distributed testing)')
+             '(only applicable to non-distributed testing)')
     parser.add_argument(
         '--gpu-id',
         type=int,
         default=0,
         help='id of gpu to use '
-        '(only applicable to non-distributed testing)')
+             '(only applicable to non-distributed testing)')
     parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm', 'mpi'],

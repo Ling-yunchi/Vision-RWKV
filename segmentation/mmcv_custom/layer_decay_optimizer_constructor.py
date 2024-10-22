@@ -80,7 +80,7 @@ class MyLayerDecayOptimizerConstructor(DefaultOptimizerConstructor):
             group_name = 'layer_%d_%s' % (layer_id, group_name)
 
             if group_name not in parameter_groups:
-                scale = layer_decay_rate**(num_layers - layer_id - 1)
+                scale = layer_decay_rate ** (num_layers - layer_id - 1)
 
                 parameter_groups[group_name] = {
                     'weight_decay': this_weight_decay,

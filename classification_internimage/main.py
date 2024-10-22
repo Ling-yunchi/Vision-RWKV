@@ -37,6 +37,7 @@ from ddp_hooks import fp16_compress_hook
 
 try:
     from apex import amp
+
     has_apex = True
 except ImportError:
     has_apex = False
@@ -52,7 +53,9 @@ except AttributeError:
 TORCH_VERSION = tuple(int(x) for x in torch.__version__.split('.')[:2])
 
 import urllib3
+
 urllib3.disable_warnings()
+
 
 def obsolete_torch_version(torch_version, version_threshold):
     return torch_version == 'parrots' or torch_version <= version_threshold
@@ -90,8 +93,8 @@ def parse_option():
         default='part',
         choices=['no', 'full', 'part'],
         help='no: no cache, '
-        'full: cache all data, '
-        'part: sharding the dataset into nonoverlapping pieces and only cache one piece'
+             'full: cache all data, '
+             'part: sharding the dataset into nonoverlapping pieces and only cache one piece'
     )
     parser.add_argument(
         '--pretrained',
@@ -129,7 +132,7 @@ def parse_option():
                         action='store_true',
                         help='Test throughput only')
     parser.add_argument('--save-ckpt-num', default=1, type=int)
-    
+
     # distributed training
     parser.add_argument("--local-rank",
                         type=int,
@@ -203,12 +206,12 @@ def main(config):
                                               opt_level=config.AMP_OPT_LEVEL)
             loss_scaler = ApexScaler()
             logger.info(
-                    'Using NVIDIA APEX AMP. Training in mixed precision.')
+                'Using NVIDIA APEX AMP. Training in mixed precision.')
         if use_amp == 'native':
             amp_autocast = torch.cuda.amp.autocast
             loss_scaler = NativeScaler()
             logger.info(
-                    'Using native Torch AMP. Training in mixed precision.')
+                'Using native Torch AMP. Training in mixed precision.')
         else:
             logger.info('AMP not enabled. Training in float32.')
 
@@ -402,9 +405,10 @@ def train_one_epoch(config,
     amp_type = torch.float16 if config.AMP_TYPE == 'float16' else torch.bfloat16
 
     accum_steps = config.TRAIN.ACCUMULATION_STEPS
+
     def cal_loss(outputs, targets):
         if not obsolete_torch_version(
-            TORCH_VERSION, (1, 9)) and config.AMP_OPT_LEVEL != "O0":
+                TORCH_VERSION, (1, 9)) and config.AMP_OPT_LEVEL != "O0":
             with amp_autocast(dtype=amp_type):
                 loss = criterion(outputs, targets)
         else:
@@ -416,7 +420,7 @@ def train_one_epoch(config,
     def update_step(index, loss):
         if config.AMP_OPT_LEVEL != "O0":
             is_second_order = hasattr(optimizer, 'is_second_order') and \
-                optimizer.is_second_order
+                              optimizer.is_second_order
             grad_norm = loss_scaler(loss,
                                     optimizer,
                                     clip_grad=config.TRAIN.CLIP_GRAD,
@@ -619,11 +623,11 @@ if __name__ == '__main__':
 
     # linear scale the learning rate according to total batch size, may not be optimal
     linear_scaled_lr = config.TRAIN.BASE_LR * \
-        config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+                       config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * \
-        config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+                              config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_min_lr = config.TRAIN.MIN_LR * \
-        config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+                           config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS

@@ -6,3 +6,9 @@
 **/data
 segmentation/ops
 batchscript-*
+
+**/checkpoints
+
+detection/ops/build
+detection/ops/dist
+detection/ops/MultiScaleDeformableAttention.egg-info

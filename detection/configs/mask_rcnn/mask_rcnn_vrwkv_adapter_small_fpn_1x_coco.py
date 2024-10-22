@@ -29,7 +29,7 @@ model = dict(
         cffn_ratio=0.25,
         deform_ratio=1.0,
         interaction_indexes=[[0, 2], [3, 5], [6, 8], [9, 11]],
-        ),
+    ),
     neck=dict(
         type='FPN',
         in_channels=[384, 384, 384, 384],

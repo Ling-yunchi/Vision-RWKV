@@ -1,9 +1,8 @@
 # Vision-RWKV for Object Detection
 
-This folder contains the implementation of the Vision-RWKV(VRWKV) for object detection. 
+This folder contains the implementation of the Vision-RWKV(VRWKV) for object detection.
 
 Our detection code is developed on top of [MMDetection v2.28.2](https://github.com/open-mmlab/mmdetection/tree/v2.28.2).
-
 
 ## Usage
 
@@ -28,6 +27,7 @@ conda activate vrwkv
 - Install `PyTorch>=1.10.0` and `torchvision>=0.9.0` with `CUDA>=10.2`:
 
 For examples, to install torch==1.12.1 with CUDA==11.3:
+
 ```bash
 pip install torch==1.12.1+cu113 torchvision==0.12.0+cu113  -f https://download.pytorch.org/whl/torch_stable.html
 ```
@@ -47,6 +47,7 @@ pip install opencv-python termcolor yacs pyyaml scipy
 ```
 
 - Compile Deformable Attention
+
 ```bash
 cd ./ops
 sh ./make.sh
@@ -54,8 +55,8 @@ sh ./make.sh
 
 ### Data Preparation
 
-Prepare COCO according to the guidelines in [MMDetection v2.28.2](https://github.com/open-mmlab/mmdetection/blob/master/docs/en/1_exist_data_model.md).
-
+Prepare COCO according to the guidelines
+in [MMDetection v2.28.2](https://github.com/open-mmlab/mmdetection/blob/master/docs/en/1_exist_data_model.md).
 
 ### Evaluation
 

@@ -98,7 +98,7 @@ class NodeDistributedSampler(Sampler):
 
         # subsample
         indices = indices[self.rank // self.num_parts:self.
-                          total_size_parts:self.num_replicas // self.num_parts]
+        total_size_parts:self.num_replicas // self.num_parts]
 
         index = torch.randperm(len(indices), generator=g).tolist()
         indices = list(np.array(indices)[index])

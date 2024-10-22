@@ -23,13 +23,15 @@ T_MAX = 256
 HEAD_SIZE = 64
 
 from torch.utils.cpp_extension import load
+
 wkv6_cuda = load(name="wkv6",
-                 sources=["mmcls_custom/models/backbones/cuda_v6/wkv6_op.cpp", 
+                 sources=["mmcls_custom/models/backbones/cuda_v6/wkv6_op.cpp",
                           "mmcls_custom/models/backbones/cuda_v6/wkv6_cuda.cu"],
                  verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math",
-                 "-O3", "-Xptxas -O3", 
-                 "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}", 
-                 f"-D_T_={T_MAX}"])
+                                                  "-O3", "-Xptxas -O3",
+                                                  "--extra-device-vectorization", f"-D_N_={HEAD_SIZE}",
+                                                  f"-D_T_={T_MAX}"])
+
 
 class WKV_6(torch.autograd.Function):
     @staticmethod
@@ -47,7 +49,8 @@ class WKV_6(torch.autograd.Function):
             assert u.is_contiguous()
             ew = (-torch.exp(w.float())).contiguous()
             ctx.save_for_backward(r, k, v, ew, u)
-            y = torch.empty((B, T, C), device=r.device, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            y = torch.empty((B, T, C), device=r.device, dtype=torch.float32,
+                            memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
             wkv6_cuda.forward(B, T, C, H, r, k, v, ew, u, y)
             return y
 
@@ -60,19 +63,26 @@ class WKV_6(torch.autograd.Function):
             H = ctx.H
             assert gy.is_contiguous()
             r, k, v, ew, u = ctx.saved_tensors
-            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.float32, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32,
+                             memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
+            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32,
+                             memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
+            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32,
+                             memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
+            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.float32,
+                             memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
+            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.float32,
+                             memory_format=torch.contiguous_format)  # .uniform_(-100, 100)
             wkv6_cuda.backward(B, T, C, H, r, k, v, ew, u, gy, gr, gk, gv, gw, gu)
-            gu = torch.sum(gu, 0).view(H, C//H)
+            gu = torch.sum(gu, 0).view(H, C // H)
             return (None, None, None, None, gr, gk, gv, gw, gu)
+
 
 def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
     return WKV_6.apply(B, T, C, H, r, k, v, w, u)
 
-def q_shift_multihead(input, shift_pixel=1, head_dim=HEAD_SIZE, 
+
+def q_shift_multihead(input, shift_pixel=1, head_dim=HEAD_SIZE,
                       patch_resolution=None, with_cls_token=False):
     B, N, C = input.shape
     assert C % head_dim == 0
@@ -84,16 +94,16 @@ def q_shift_multihead(input, shift_pixel=1, head_dim=HEAD_SIZE,
         B, -1, head_dim, patch_resolution[0], patch_resolution[1])  # [B, n_head, head_dim H, W]
     B, _, _, H, W = input.shape
     output = torch.zeros_like(input)
-    output[:, :, 0:int(head_dim*1/4), :, shift_pixel:W] = \
-        input[:, :, 0:int(head_dim*1/4), :, 0:W-shift_pixel]
-    output[:, :, int(head_dim/4):int(head_dim/2), :, 0:W-shift_pixel] = \
-        input[:, :, int(head_dim/4):int(head_dim/2), :, shift_pixel:W]
-    output[:, :, int(head_dim/2):int(head_dim/4*3), shift_pixel:H, :] = \
-        input[:, :, int(head_dim/2):int(head_dim/4*3), 0:H-shift_pixel, :]
-    output[:, :, int(head_dim*3/4):int(head_dim), 0:H-shift_pixel, :] = \
-        input[:, :, int(head_dim*3/4):int(head_dim), shift_pixel:H, :]
+    output[:, :, 0:int(head_dim * 1 / 4), :, shift_pixel:W] = \
+        input[:, :, 0:int(head_dim * 1 / 4), :, 0:W - shift_pixel]
+    output[:, :, int(head_dim / 4):int(head_dim / 2), :, 0:W - shift_pixel] = \
+        input[:, :, int(head_dim / 4):int(head_dim / 2), :, shift_pixel:W]
+    output[:, :, int(head_dim / 2):int(head_dim / 4 * 3), shift_pixel:H, :] = \
+        input[:, :, int(head_dim / 2):int(head_dim / 4 * 3), 0:H - shift_pixel, :]
+    output[:, :, int(head_dim * 3 / 4):int(head_dim), 0:H - shift_pixel, :] = \
+        input[:, :, int(head_dim * 3 / 4):int(head_dim), shift_pixel:H, :]
     if with_cls_token:
-        output = output.reshape(B, C, N-1).transpose(1, 2)
+        output = output.reshape(B, C, N - 1).transpose(1, 2)
         output = torch.cat((output, cls_tokens), dim=1)
     else:
         output = output.reshape(B, C, N).transpose(1, 2)
@@ -102,7 +112,7 @@ def q_shift_multihead(input, shift_pixel=1, head_dim=HEAD_SIZE,
 
 class VRWKV_SpatialMix_V6(BaseModule):
     def __init__(self, n_embd, n_head, n_layer, layer_id, shift_mode='q_shift_multihead',
-                 shift_pixel=1, init_mode='fancy', key_norm=False, with_cls_token=False, 
+                 shift_pixel=1, init_mode='fancy', key_norm=False, with_cls_token=False,
                  with_cp=False):
         super().__init__()
         self.layer_id = layer_id
@@ -134,7 +144,7 @@ class VRWKV_SpatialMix_V6(BaseModule):
         self.with_cp = with_cp
 
     def _init_weights(self, init_mode):
-        if init_mode=='fancy':
+        if init_mode == 'fancy':
             with torch.no_grad():
                 ratio_0_to_1 = self.layer_id / (self.n_layer - 1)  # 0 to 1
                 ratio_1_to_almost0 = 1.0 - (self.layer_id / self.n_layer)  # 1 to ~0
@@ -150,15 +160,15 @@ class VRWKV_SpatialMix_V6(BaseModule):
                 self.time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
                 self.time_maa_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
-                TIME_MIX_EXTRA_DIM = 32 # generate TIME_MIX for w,k,v,r,g
-                self.time_maa_w1 = nn.Parameter(torch.zeros(self.n_embd, TIME_MIX_EXTRA_DIM*5).uniform_(-1e-4, 1e-4))
+                TIME_MIX_EXTRA_DIM = 32  # generate TIME_MIX for w,k,v,r,g
+                self.time_maa_w1 = nn.Parameter(torch.zeros(self.n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-1e-4, 1e-4))
                 self.time_maa_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, self.n_embd).uniform_(-1e-4, 1e-4))
 
                 # fancy time_decay
                 decay_speed = torch.ones(self.attn_sz)
                 for n in range(self.attn_sz):
                     decay_speed[n] = -6 + 5 * (n / (self.attn_sz - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-                self.time_decay = nn.Parameter(decay_speed.reshape(1,1,self.attn_sz))
+                self.time_decay = nn.Parameter(decay_speed.reshape(1, 1, self.attn_sz))
 
                 TIME_DECAY_EXTRA_DIM = 64
                 self.time_decay_w1 = nn.Parameter(torch.zeros(self.n_embd, TIME_DECAY_EXTRA_DIM).uniform_(-1e-4, 1e-4))
@@ -177,10 +187,10 @@ class VRWKV_SpatialMix_V6(BaseModule):
         # Mix x with the previous timestep to produce xk, xv, xr
         B, T, C = x.size()
 
-        xx = self.shift_func(x, self.shift_pixel, patch_resolution=patch_resolution, 
+        xx = self.shift_func(x, self.shift_pixel, patch_resolution=patch_resolution,
                              with_cls_token=self.with_cls_token) - x
         xxx = x + xx * self.time_maa_x  # [B, T, C]
-        xxx = torch.tanh(xxx @ self.time_maa_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.tanh(xxx @ self.time_maa_w1).view(B * T, 5, -1).transpose(0, 1)
         # [5, B*T, TIME_MIX_EXTRA_DIM]
         xxx = torch.bmm(xxx, self.time_maa_w2).view(5, B, T, -1)
         # [5, B, T, C]
@@ -206,7 +216,7 @@ class VRWKV_SpatialMix_V6(BaseModule):
     def jit_func_2(self, x, g):
         B, T, C = x.size()
         x = x.view(B * T, C)
-        
+
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
         return x
@@ -221,6 +231,7 @@ class VRWKV_SpatialMix_V6(BaseModule):
             if self.key_norm is not None:
                 x = self.key_norm(x)
             return self.jit_func_2(x, g)
+
         if self.with_cp and x.requires_grad:
             x = cp.checkpoint(_inner_forward, x)
         else:
@@ -230,7 +241,7 @@ class VRWKV_SpatialMix_V6(BaseModule):
 
 class VRWKV_ChannelMix(BaseModule):
     def __init__(self, n_embd, n_head, n_layer, layer_id, shift_mode='q_shift_multihead',
-                 shift_pixel=1, hidden_rate=4, init_mode='fancy', key_norm=False, 
+                 shift_pixel=1, hidden_rate=4, init_mode='fancy', key_norm=False,
                  with_cls_token=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
@@ -258,8 +269,8 @@ class VRWKV_ChannelMix(BaseModule):
 
     def _init_weights(self, init_mode):
         if init_mode == 'fancy':
-            with torch.no_grad(): # fancy init of time_mix
-                ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer)) # 1 to ~0
+            with torch.no_grad():  # fancy init of time_mix
+                ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer))  # 1 to ~0
                 x = torch.ones(1, 1, self.n_embd)
                 for i in range(self.n_embd):
                     x[0, 0, i] = i / self.n_embd
@@ -282,6 +293,7 @@ class VRWKV_ChannelMix(BaseModule):
             kv = self.value(k)
             x = torch.sigmoid(self.receptance(xr)) * kv
             return x
+
         if self.with_cp and x.requires_grad:
             x = cp.checkpoint(_inner_forward, x)
         else:
@@ -335,6 +347,7 @@ class Block(BaseModule):
                     x = x + self.drop_path(self.att(self.ln1(x), patch_resolution))
                     x = x + self.drop_path(self.ffn(self.ln2(x), patch_resolution))
             return x
+
         if self.with_cp and x.requires_grad:
             x = cp.checkpoint(_inner_forward, x)
         else:
@@ -376,7 +389,7 @@ class VRWKV6(BaseBackbone):
         # Set cls token
         if output_cls_token:
             assert with_cls_token is True, f'with_cls_token must be True if' \
-                f'set output_cls_token to True, but got {with_cls_token}'
+                                           f'set output_cls_token to True, but got {with_cls_token}'
         self.with_cls_token = with_cls_token
         self.output_cls_token = output_cls_token
         if self.with_cls_token:
@@ -390,7 +403,7 @@ class VRWKV6(BaseBackbone):
             kernel_size=patch_size,
             stride=patch_size,
             bias=True)
-        
+
         self.patch_resolution = self.patch_embed.init_out_size
         num_patches = self.patch_resolution[0] * self.patch_resolution[1]
 
@@ -398,7 +411,7 @@ class VRWKV6(BaseBackbone):
         self.interpolate_mode = interpolate_mode
         self.pos_embed = nn.Parameter(
             torch.zeros(1, num_patches, self.embed_dims))
-        
+
         self.drop_after_pos = nn.Dropout(p=drop_rate)
 
         if isinstance(out_indices, int):
@@ -435,7 +448,6 @@ class VRWKV6(BaseBackbone):
         self.final_norm = final_norm
         if final_norm:
             self.ln1 = nn.LayerNorm(self.embed_dims)
-
 
     def forward(self, x):
         B = x.shape[0]

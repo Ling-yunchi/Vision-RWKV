@@ -67,7 +67,7 @@ class MSDeformAttn(nn.Module):
             self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
         grid_init = (grid_init / grid_init.abs().max(-1, keepdim=True)[0]).view(
-                         self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
+            self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
         for i in range(self.n_points):
             grid_init[:, :, i, :] *= i + 1
 
@@ -109,7 +109,7 @@ class MSDeformAttn(nn.Module):
             N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
         attention_weights = self.attention_weights(query).view(
             N, Len_q, self.n_heads, self.n_levels * self.n_points)
-        attention_weights = F.softmax(attention_weights, -1).\
+        attention_weights = F.softmax(attention_weights, -1). \
             view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
 
         if reference_points.shape[-1] == 2:

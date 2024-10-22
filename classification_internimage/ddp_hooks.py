@@ -109,7 +109,7 @@ def bf16_compress_hook(
 
 
 def fp16_compress_wrapper(
-    hook: Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]
+        hook: Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]
 ) -> Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]:
     """
     This wrapper casts the input gradient tensor of a given DDP communication hook to half-precision
@@ -145,7 +145,7 @@ def fp16_compress_wrapper(
 
 
 def bf16_compress_wrapper(
-    hook: Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]
+        hook: Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]
 ) -> Callable[[Any, dist.GradBucket], torch.futures.Future[torch.Tensor]]:
     """
     Warning: This API is experimental, and it requires NCCL version later than 2.9.6.

@@ -17,7 +17,7 @@ model = dict(
         drop_path_rate=0.3,
         post_norm=True,
         init_values=1e-5,
-        ),
+    ),
     neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='LinearClsHead',

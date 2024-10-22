@@ -12,7 +12,7 @@ model = dict(
         type='VRWKV',
         img_size=224,
         patch_size=16,
-        embed_dims=192,),
+        embed_dims=192, ),
     neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='LinearClsHead',

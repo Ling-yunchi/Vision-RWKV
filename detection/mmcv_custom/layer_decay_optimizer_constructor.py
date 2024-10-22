@@ -13,7 +13,9 @@ import json
 from mmcv.runner import (OPTIMIZER_BUILDERS, DefaultOptimizerConstructor,
                          get_dist_info)
 from mmcv.utils import get_logger
+
 logger = get_logger(__name__)
+
 
 def get_num_layer_for_vit(var_name, num_max_layer):
     if var_name in ('backbone.cls_token', 'backbone.mask_token',
@@ -70,7 +72,7 @@ class LayerDecayOptimizerConstructor(DefaultOptimizerConstructor):
             group_name = 'layer_%d_%s' % (layer_id, group_name)
 
             if group_name not in parameter_groups:
-                scale = layer_decay_rate**(num_layers - layer_id - 1)
+                scale = layer_decay_rate ** (num_layers - layer_id - 1)
 
                 parameter_groups[group_name] = {
                     'weight_decay': this_weight_decay,

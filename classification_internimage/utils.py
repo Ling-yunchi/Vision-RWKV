@@ -11,6 +11,7 @@ import numpy as np
 import torch.distributed as dist
 from collections import OrderedDict
 from timm.utils import get_state_dict
+
 try:
     # noinspection PyUnresolvedReferences
     from apex import amp
@@ -90,7 +91,7 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, scaler, logger):
         config.TRAIN.START_EPOCH = checkpoint['epoch'] + 1
         config.freeze()
         if 'amp' in checkpoint and config.AMP_OPT_LEVEL != 'O0' and checkpoint[
-                'config'].AMP_OPT_LEVEL != 'O0':
+            'config'].AMP_OPT_LEVEL != 'O0':
             scaler.load_state_dict(checkpoint['amp'])
         logger.info(
             f"=> loaded successfully {config.MODEL.RESUME} (epoch {checkpoint['epoch']})"
@@ -180,8 +181,8 @@ def load_pretrained(config, model, logger):
         else:
             if L1 != L2:
                 # bicubic interpolate relative_position_bias_table if not match
-                S1 = int(L1**0.5)
-                S2 = int(L2**0.5)
+                S1 = int(L1 ** 0.5)
+                S2 = int(L2 ** 0.5)
                 relative_position_bias_table_pretrained_resized = torch.nn.functional.interpolate(
                     relative_position_bias_table_pretrained.permute(1, 0).view(
                         1, nH1, S1, S1),
@@ -189,7 +190,7 @@ def load_pretrained(config, model, logger):
                     mode='bicubic')
                 state_dict[
                     k] = relative_position_bias_table_pretrained_resized.view(
-                        nH2, L2).permute(1, 0)
+                    nH2, L2).permute(1, 0)
 
     # bicubic interpolate absolute_pos_embed if not match
     absolute_pos_embed_keys = [
@@ -205,8 +206,8 @@ def load_pretrained(config, model, logger):
             logger.warning(f'Error in loading {k}, passing......')
         else:
             if L1 != L2:
-                S1 = int(L1**0.5)
-                S2 = int(L2**0.5)
+                S1 = int(L1 ** 0.5)
+                S2 = int(L2 ** 0.5)
                 absolute_pos_embed_pretrained = absolute_pos_embed_pretrained.reshape(
                     -1, S1, S1, C1)
                 absolute_pos_embed_pretrained = absolute_pos_embed_pretrained.permute(
@@ -256,7 +257,7 @@ def load_pretrained(config, model, logger):
                     map22kto1k = f.readlines()
                 map22kto1k = [int(id22k.strip()) for id22k in map22kto1k]
                 state_dict[f'{head_key}.weight'] = state_dict[f'{head_key}.weight'][
-                    map22kto1k, :]
+                                                   map22kto1k, :]
                 state_dict[f'{head_key}.bias'] = state_dict[f'{head_key}.bias'][map22kto1k]
             elif Nc1 == 47338 and Nc2 == 1000:
                 logger.info('loading Bamboo-47K weight to ImageNet-1K ......')
@@ -266,7 +267,7 @@ def load_pretrained(config, model, logger):
                     map22kto1k = f.readlines()
                 map22kto1k = [int(id22k.strip()) for id22k in map22kto1k]
                 state_dict[f'{head_key}.weight'] = state_dict[f'{head_key}.weight'][
-                    map22kto1k, :]
+                                                   map22kto1k, :]
                 state_dict[f'{head_key}.bias'] = state_dict[f'{head_key}.bias'][map22kto1k]
 
     msg = model.load_state_dict(state_dict, strict=False)
@@ -317,9 +318,8 @@ def save_checkpoint(config,
                     max_accuracy_ems=None,
                     ems_model_num=None,
                     best=None):
-
     save_state = {
-        'state_dict': model.state_dict(), 
+        'state_dict': model.state_dict(),
         'optimizer': optimizer.state_dict(),
         'lr_scheduler': lr_scheduler.state_dict(),
         'max_accuracy': max_accuracy,
@@ -364,8 +364,8 @@ def get_grad_norm(parameters, norm_type=2):
     total_norm = 0
     for p in parameters:
         param_norm = p.grad.data.norm(norm_type)
-        total_norm += param_norm.item()**norm_type
-    total_norm = total_norm**(1. / norm_type)
+        total_norm += param_norm.item() ** norm_type
+    total_norm = total_norm ** (1. / norm_type)
     return total_norm
 
 

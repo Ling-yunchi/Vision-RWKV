@@ -1,8 +1,9 @@
 # Vision-RWKV for Semantic Segmentation
 
-This folder contains the implementation of the Vision-RWKV(VRWKV) for semantic segmentation. 
+This folder contains the implementation of the Vision-RWKV(VRWKV) for semantic segmentation.
 
-Our segmentation code is developed on top of [MMSegmentation v0.30.0](https://github.com/open-mmlab/mmsegmentation/tree/v0.30.0).
+Our segmentation code is developed on top
+of [MMSegmentation v0.30.0](https://github.com/open-mmlab/mmsegmentation/tree/v0.30.0).
 
 ## Usage
 
@@ -27,10 +28,10 @@ conda activate vrwkv
 - Install `PyTorch>=1.10.0` and `torchvision>=0.9.0` with `CUDA>=10.2`:
 
 For examples, to install torch==1.12.1 with CUDA==11.3:
+
 ```bash
 pip install torch==1.12.1+cu113 torchvision==0.12.0+cu113  -f https://download.pytorch.org/whl/torch_stable.html
 ```
-
 
 - Install `timm` and `mmcv-full` and `mmsegmentation':
 
@@ -42,6 +43,7 @@ pip install timm==0.6.11 mmdet==2.28.2
 ```
 
 - Compile Deformable Attention
+
 ```bash
 ln -s ../detection/ops ./
 cd ./ops
@@ -50,8 +52,9 @@ sh ./make.sh
 
 ### Data Preparation
 
-Prepare datasets according to the [guidelines](https://github.com/open-mmlab/mmsegmentation/blob/master/docs/en/dataset_prepare.md#prepare-datasets) in MMSegmentation.
-
+Prepare datasets according to
+the [guidelines](https://github.com/open-mmlab/mmsegmentation/blob/master/docs/en/dataset_prepare.md#prepare-datasets)
+in MMSegmentation.
 
 ### Evaluation
 

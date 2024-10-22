@@ -17,6 +17,7 @@ from .samplers import SubsetRandomSampler, NodeDistributedSampler
 try:
     from torchvision.transforms import InterpolationMode
 
+
     def _pil_interp(method):
         if method == 'bicubic':
             return InterpolationMode.BICUBIC

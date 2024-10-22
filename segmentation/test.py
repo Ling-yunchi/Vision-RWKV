@@ -8,8 +8,8 @@ import warnings
 
 import mmcv
 
-import mmcv_custom   # noqa: F401,F403
-import mmseg_custom   # noqa: F401,F403
+import mmcv_custom  # noqa: F401,F403
+import mmseg_custom  # noqa: F401,F403
 import torch
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
@@ -36,14 +36,14 @@ def parse_args():
         '--format-only',
         action='store_true',
         help='Format the output results without perform evaluation. It is'
-        'useful when you want to format the result to a specific format and '
-        'submit it to the test server')
+             'useful when you want to format the result to a specific format and '
+             'submit it to the test server')
     parser.add_argument(
         '--eval',
         type=str,
         nargs='+',
         help='evaluation metrics, which depends on the dataset, e.g., "mIoU"'
-        ' for generic datasets, and "cityscapes" for Cityscapes')
+             ' for generic datasets, and "cityscapes" for Cityscapes')
     parser.add_argument('--show', action='store_true', help='show results')
     parser.add_argument(
         '--show-dir', help='directory where painted images will be saved')
@@ -54,28 +54,28 @@ def parse_args():
     parser.add_argument(
         '--tmpdir',
         help='tmp directory used for collecting results from multiple '
-        'workers, available when gpu_collect is not specified')
+             'workers, available when gpu_collect is not specified')
     parser.add_argument(
         '--options',
         nargs='+',
         action=DictAction,
         help="--options is deprecated in favor of --cfg_options' and it will "
-        'not be supported in version v0.22.0. Override some settings in the '
-        'used config, the key-value pair in xxx=yyy format will be merged '
-        'into config file. If the value to be overwritten is a list, it '
-        'should be like key="[a,b]" or key=a,b It also allows nested '
-        'list/tuple values, e.g. key="[(a,b),(c,d)]" Note that the quotation '
-        'marks are necessary and that no white space is allowed.')
+             'not be supported in version v0.22.0. Override some settings in the '
+             'used config, the key-value pair in xxx=yyy format will be merged '
+             'into config file. If the value to be overwritten is a list, it '
+             'should be like key="[a,b]" or key=a,b It also allows nested '
+             'list/tuple values, e.g. key="[(a,b),(c,d)]" Note that the quotation '
+             'marks are necessary and that no white space is allowed.')
     parser.add_argument(
         '--cfg-options',
         nargs='+',
         action=DictAction,
         help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file. If the value to '
-        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
-        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
-        'Note that the quotation marks are necessary and that no white space '
-        'is allowed.')
+             'in xxx=yyy format will be merged into config file. If the value to '
+             'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+             'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+             'Note that the quotation marks are necessary and that no white space '
+             'is allowed.')
     parser.add_argument(
         '--eval-options',
         nargs='+',
@@ -112,7 +112,7 @@ def parse_args():
 def main():
     args = parse_args()
     assert args.out or args.eval or args.format_only or args.show \
-        or args.show_dir, \
+           or args.show_dir, \
         ('Please specify at least one operation (save/eval/format/show the '
          'results / save the results) with the argument "--out", "--eval"'
          ', "--format-only", "--show" or "--show-dir"')
@@ -209,7 +209,7 @@ def main():
             'default')
 
     eval_on_format_results = (
-        args.eval is not None and 'cityscapes' in args.eval)
+            args.eval is not None and 'cityscapes' in args.eval)
     if eval_on_format_results:
         assert len(args.eval) == 1, 'eval on format results is not ' \
                                     'applicable for metrics other than ' \

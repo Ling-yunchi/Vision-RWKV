@@ -74,7 +74,7 @@ _C.MODEL.VRWKV.DROP_RATE = 0.
 _C.MODEL.VRWKV.EMBED_DIMS = 256
 _C.MODEL.VRWKV.DEPTH = 12
 _C.MODEL.VRWKV.DROP_PATH_RATE = 0.
-_C.MODEL.VRWKV.CHANNEL_GAMMA = 1/4
+_C.MODEL.VRWKV.CHANNEL_GAMMA = 1 / 4
 _C.MODEL.VRWKV.SHIFT_PIXEL = 1
 _C.MODEL.VRWKV.SHIFT_MODE = 'spatial_shift'
 _C.MODEL.VRWKV.INIT_MODE = 'fancy'
@@ -85,7 +85,6 @@ _C.MODEL.VRWKV.HIDDEN_RATE = 4  # in channel mix and spatial mix
 _C.MODEL.VRWKV.FINAL_NORM = True
 _C.MODEL.VRWKV.INTERPOLATE_MODE = 'bicubic'
 _C.MODEL.VRWKV.HIDDEN_DIMS = 3072
-
 
 # -----------------------------------------------------------------------------
 # Training settings

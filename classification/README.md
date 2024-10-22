@@ -2,14 +2,17 @@
 
 This folder contains the implementation of the Vision-RWKV(VRWKV) for image classification.
 
-Our detection code is developed on top of [MMClassification v0.25.0](https://github.com/open-mmlab/mmpretrain/tree/v0.25.0).
+Our detection code is developed on top
+of [MMClassification v0.25.0](https://github.com/open-mmlab/mmpretrain/tree/v0.25.0).
 
 <!-- TOC -->
+
 * [Install](#install)
 * [Data Preparation](#data-preparation)
 * [Evaluation](#evaluation)
 * [Training from Scratch on ImageNet-1K](#training-from-scratch-on-imagenet-1k)
 * [Manage Jobs with Slurm.](#manage-jobs-with-slurm)
+
 <!-- TOC -->
 
 ## Usage
@@ -35,6 +38,7 @@ conda activate vrwkv
 - Install `PyTorch>=1.10.0` and `torchvision>=0.9.0` with `CUDA>=10.2`:
 
 For examples, to install torch==1.12.1 with CUDA==11.3:
+
 ```bash
 pip install torch==1.12.1+cu113 torchvision==0.12.0+cu113  -f https://download.pytorch.org/whl/torch_stable.html
 ```
@@ -56,6 +60,7 @@ pip install opencv-python termcolor yacs pyyaml scipy
 ### Data Preparation
 
 We use standard ImageNet dataset, you can download it from http://image-net.org/. The file structure should looks like:
+
 ```bash
 $ tree data
 imagenet/

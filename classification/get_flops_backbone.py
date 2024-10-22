@@ -74,7 +74,7 @@ def get_addi_flops_vrwkv6(model, input_shape, cfg):
     print(f"Head Size in VRWKV6: {head_size}")
     num_layers = len(model.backbone.layers)
     addi_flops = 0
-    addi_flops += (num_layers * vrwkv6_flops(h*w, embed_dims, head_size))
+    addi_flops += (num_layers * vrwkv6_flops(h * w, embed_dims, head_size))
     print(f"Additional Flops in VRWKV6*{num_layers} layers: {flops_to_string(addi_flops)}")
     return addi_flops
 
@@ -91,7 +91,7 @@ def get_addi_flops_vrwkv(model, input_shape, cfg):
     embed_dims = model.backbone.embed_dims
     num_layers = len(model.backbone.layers)
     addi_flops = 0
-    addi_flops += (num_layers * vrwkv_flops(h*w, embed_dims))
+    addi_flops += (num_layers * vrwkv_flops(h * w, embed_dims))
     print(f"Additional Flops in VRWKV(Attn)*{num_layers} layers: {flops_to_string(addi_flops)}")
     return addi_flops
 
@@ -117,7 +117,7 @@ def main():
     if len(args.shape) == 1:
         input_shape = (3, args.shape[0], args.shape[0])
     elif len(args.shape) == 2:
-        input_shape = (3, ) + tuple(args.shape)
+        input_shape = (3,) + tuple(args.shape)
     else:
         raise ValueError('invalid input shape')
 

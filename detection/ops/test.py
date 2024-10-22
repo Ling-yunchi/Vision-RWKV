@@ -17,7 +17,7 @@ N, M, D = 1, 2, 2
 Lq, L, P = 2, 2, 2
 shapes = torch.as_tensor([(6, 4), (3, 2)], dtype=torch.long).cuda()
 level_start_index = torch.cat((shapes.new_zeros(
-    (1, )), shapes.prod(1).cumsum(0)[:-1]))
+    (1,)), shapes.prod(1).cumsum(0)[:-1]))
 S = sum([(H * W).item() for H, W in shapes])
 
 torch.manual_seed(3)
@@ -79,7 +79,6 @@ def check_gradient_numerical(channels=4,
                              grad_value=True,
                              grad_sampling_loc=True,
                              grad_attn_weight=True):
-
     value = torch.rand(N, S, M, channels).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5

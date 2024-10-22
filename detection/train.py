@@ -37,12 +37,12 @@ def parse_args():
     group_gpus.add_argument('--gpus',
                             type=int,
                             help='number of gpus to use '
-                            '(only applicable to non-distributed training)')
+                                 '(only applicable to non-distributed training)')
     group_gpus.add_argument('--gpu-ids',
                             type=int,
                             nargs='+',
                             help='ids of gpus to use '
-                            '(only applicable to non-distributed training)')
+                                 '(only applicable to non-distributed training)')
     parser.add_argument('--seed', type=int, default=None, help='random seed')
     parser.add_argument(
         '--deterministic',
@@ -53,18 +53,18 @@ def parse_args():
         nargs='+',
         action=DictAction,
         help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file (deprecate), '
-        'change to --cfg-options instead.')
+             'in xxx=yyy format will be merged into config file (deprecate), '
+             'change to --cfg-options instead.')
     parser.add_argument(
         '--cfg-options',
         nargs='+',
         action=DictAction,
         help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file. If the value to '
-        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
-        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
-        'Note that the quotation marks are necessary and that no white space '
-        'is allowed.')
+             'in xxx=yyy format will be merged into config file. If the value to '
+             'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+             'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+             'Note that the quotation marks are necessary and that no white space '
+             'is allowed.')
     parser.add_argument('--launcher',
                         choices=['none', 'pytorch', 'slurm', 'mpi'],
                         default='none',
@@ -126,8 +126,8 @@ def main():
         # re-set gpu_ids with distributed training mode
         _, world_size = get_dist_info()
         cfg.gpu_ids = range(world_size)
-        
-    cfg.device = 'cuda' # fix 'ConfigDict' object has no attribute 'device'
+
+    cfg.device = 'cuda'  # fix 'ConfigDict' object has no attribute 'device'
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
     # dump config
@@ -175,7 +175,7 @@ def main():
         # save mmdet version, config file content and class names in
         # checkpoints as meta data
         cfg.checkpoint_config.meta = dict(mmdet_version=__version__ +
-                                          get_git_hash()[:7],
+                                                        get_git_hash()[:7],
                                           CLASSES=datasets[0].CLASSES)
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
