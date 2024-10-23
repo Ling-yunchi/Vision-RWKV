@@ -16,8 +16,8 @@ from torch.nn import functional as F
 
 from mmcls_custom.models.backbones.scan import s_hw, s_wh, s_rhw, s_hrw, s_wrh, s_rwh, sr_hw, sr_wh, sr_rhw, sr_hrw, \
     sr_rwh, sr_wrh
+from mmcls_custom.models.backbones.wkv import RUN_CUDA
 from mmcls_custom.models.utils import DropPath
-from models.vrwkv import RUN_CUDA
 
 logger = logging.getLogger(__name__)
 
@@ -147,19 +147,20 @@ class VRWKV_SpatialMix(BaseModule):
         self.n_embd = n_embd
         self.device = None
         self.attn_sz = n_embd
-        self._init_weights(init_mode)
         self.shift_pixel = shift_pixel
         self.shift_mode = shift_mode
 
         # MoE System
         self.drop = drop
         self.revin_affine = revin_affine
-        self.num_experts = 6
+        self.num_experts = 4
 
         self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self.dropout = nn.Dropout2d(drop)
         self.rev = RevIN(n_embd, affine=revin_affine)
+
+        self._init_weights(init_mode)
 
         if shift_pixel > 0:
             self.shift_func = eval(shift_mode)
@@ -202,24 +203,24 @@ class VRWKV_SpatialMix(BaseModule):
                 self.spatial_first = nn.Parameter(torch.ones(multi_dim) * math.log(0.3) + zigzag)
 
                 # fancy time_mix
-                x = torch.ones(1, 1, multi_dim)
-                for i in range(multi_dim):
-                    x[0, 0, i] = i / multi_dim
+                x = torch.ones(1, 1, self.n_embd)
+                for i in range(self.n_embd):
+                    x[0, 0, i] = i / self.n_embd
                 self.spatial_mix_k = nn.Parameter(torch.pow(x, ratio_1_to_almost0))
                 self.spatial_mix_v = nn.Parameter(torch.pow(x, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
                 self.spatial_mix_r = nn.Parameter(torch.pow(x, 0.5 * ratio_1_to_almost0))
         elif init_mode == 'local':
-            self.spatial_decay = nn.Parameter(torch.ones(multi_dim))
-            self.spatial_first = nn.Parameter(torch.ones(multi_dim))
-            self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, multi_dim]))
-            self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, multi_dim]))
-            self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, multi_dim]))
+            self.spatial_decay = nn.Parameter(torch.ones(self.n_embd))
+            self.spatial_first = nn.Parameter(torch.ones(self.n_embd))
+            self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+            self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]))
+            self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]))
         elif init_mode == 'global':
-            self.spatial_decay = nn.Parameter(torch.zeros(multi_dim))
-            self.spatial_first = nn.Parameter(torch.zeros(multi_dim))
-            self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, multi_dim]) * 0.5)
-            self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, multi_dim]) * 0.5)
-            self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, multi_dim]) * 0.5)
+            self.spatial_decay = nn.Parameter(torch.zeros(self.n_embd))
+            self.spatial_first = nn.Parameter(torch.zeros(self.n_embd))
+            self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+            self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
+            self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
         else:
             raise NotImplementedError
 
@@ -263,20 +264,20 @@ class VRWKV_SpatialMix(BaseModule):
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
-            scan_func = [s_hw, s_wh, s_rhw, s_hrw, s_rwh, s_wrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_hrw, sr_rwh, sr_wrh]
+            scan_func = [s_hw, s_wh, s_rhw, s_hrw]
+            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_hrw]
 
-            ks = torch.stack([f(k) for f in scan_func], dim=2)  # b (h w) (c e)
-            vs = torch.stack([f(v) for f in scan_func], dim=2)  # b (h w) (c e)
+            ks = torch.cat([f(k) for f in scan_func], dim=2)  # b (h w) (c e)
+            vs = torch.cat([f(v) for f in scan_func], dim=2)  # b (h w) (c e)
 
             expert_outputs = RUN_CUDA(B, T, C * self.num_experts,
                                       self.spatial_decay / T, self.spatial_first / T, ks, vs)
             if self.key_norm is not None:
                 expert_outputs = self.key_norm(expert_outputs)
-            expert_outputs = torch.stack([
-                rearrange(re_scan_func[i](expert_outputs[:, :, i * self.attn_sz:i * (self.attn_sz + 1)], h, w),
+            expert_outputs = torch.cat([
+                rearrange(re_scan_func[i](expert_outputs[:, :, i * self.attn_sz:(i + 1) * self.attn_sz], h, w),
                           "b c h w -> b (h w) c") for i in range(self.num_experts)
-            ])  # b (h w) (c e)
+            ], dim=2)  # b (h w) (c e)
             expert_outputs = sr * expert_outputs  # b (h w) (c e)
             expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
                                        h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
@@ -536,12 +537,16 @@ class VVRWKV(BaseBackbone):
 
 
 if __name__ == "__main__":
-    from mmcv.cnn import build_model_from_cfg
-    from mmcv import Config
+    model = VVRWKV(
+        img_size=224,
+        patch_size=16,
+        in_channels=3,
+        out_indices=[2, 5, 8, 11],
+        drop_rate=0.,
+        embed_dims=192,
+        depth=12,
+    ).cuda()
 
-    cfg = Config.fromfile("configs/vvrwkv/vvrwkv_tiny_8xb128_in1k.py")
-    model = build_model_from_cfg(cfg)
-
-    x = torch.randn(1, 3, 224, 224)
+    x = torch.randn(1, 3, 224, 224).cuda()
     out = model(x)
     print(out[0].shape)
