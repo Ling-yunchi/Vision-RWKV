@@ -1,96 +1,21 @@
 # Copyright (c) Shanghai AI Lab. All rights reserved.
-from typing import Sequence
-import math, os
-
 import logging
-import numpy as np
+import math
+from typing import Sequence
+
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
 import torch.utils.checkpoint as cp
-
-from mmcv.runner.base_module import BaseModule, ModuleList
-from mmcv.cnn.bricks.transformer import PatchEmbed
+from mmcls.models.backbones.base_backbone import BaseBackbone
 from mmcls.models.builder import BACKBONES
 from mmcls.models.utils import resize_pos_embed
-from mmcls.models.backbones.base_backbone import BaseBackbone
+from mmcv.cnn.bricks.transformer import PatchEmbed
+from mmcv.runner.base_module import BaseModule, ModuleList
 
+from mmcls_custom.models.backbones.wkv import RUN_CUDA
 from mmcls_custom.models.utils import DropPath
 
 logger = logging.getLogger(__name__)
-
-T_MAX = 256
-
-from torch.utils.cpp_extension import load
-
-wkv_cuda = load(name="wkv", sources=["mmcls_custom/models/backbones/cuda/wkv_op.cpp",
-                                     "mmcls_custom/models/backbones/cuda/wkv_cuda.cu"],
-                verbose=True,
-                extra_cuda_cflags=['-res-usage', '--maxrregcount 60', '--use_fast_math', '-O3', '-Xptxas -O3',
-                                   f'-DTmax={T_MAX}'])
-
-
-class WKV(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, B, T, C, w, u, k, v):
-        ctx.B = B
-        ctx.T = T
-        ctx.C = C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-
-        half_mode = (w.dtype == torch.half)
-        bf_mode = (w.dtype == torch.bfloat16)
-        ctx.save_for_backward(w, u, k, v)
-        w = w.float().contiguous()
-        u = u.float().contiguous()
-        k = k.float().contiguous()
-        v = v.float().contiguous()
-        y = torch.empty((B, T, C), device='cuda', memory_format=torch.contiguous_format)
-        wkv_cuda.forward(B, T, C, w, u, k, v, y)
-        if half_mode:
-            y = y.half()
-        elif bf_mode:
-            y = y.bfloat16()
-        return y
-
-    @staticmethod
-    def backward(ctx, gy):
-        B = ctx.B
-        T = ctx.T
-        C = ctx.C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-        w, u, k, v = ctx.saved_tensors
-        gw = torch.zeros((B, C), device='cuda').contiguous()
-        gu = torch.zeros((B, C), device='cuda').contiguous()
-        gk = torch.zeros((B, T, C), device='cuda').contiguous()
-        gv = torch.zeros((B, T, C), device='cuda').contiguous()
-        half_mode = (w.dtype == torch.half)
-        bf_mode = (w.dtype == torch.bfloat16)
-        wkv_cuda.backward(B, T, C,
-                          w.float().contiguous(),
-                          u.float().contiguous(),
-                          k.float().contiguous(),
-                          v.float().contiguous(),
-                          gy.float().contiguous(),
-                          gw, gu, gk, gv)
-        if half_mode:
-            gw = torch.sum(gw.half(), dim=0)
-            gu = torch.sum(gu.half(), dim=0)
-            return (None, None, None, gw.half(), gu.half(), gk.half(), gv.half())
-        elif bf_mode:
-            gw = torch.sum(gw.bfloat16(), dim=0)
-            gu = torch.sum(gu.bfloat16(), dim=0)
-            return (None, None, None, gw.bfloat16(), gu.bfloat16(), gk.bfloat16(), gv.bfloat16())
-        else:
-            gw = torch.sum(gw, dim=0)
-            gu = torch.sum(gu, dim=0)
-            return (None, None, None, gw, gu, gk, gv)
-
-
-def RUN_CUDA(B, T, C, w, u, k, v):
-    return WKV.apply(B, T, C, w.cuda(), u.cuda(), k.cuda(), v.cuda())
 
 
 def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
