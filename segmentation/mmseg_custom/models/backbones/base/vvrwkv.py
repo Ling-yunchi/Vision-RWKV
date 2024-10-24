@@ -1,23 +1,24 @@
 # Copyright (c) Shanghai AI Lab. All rights reserved.
 import logging
 import math
+import warnings
 from typing import Sequence
 
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 from einops import rearrange
-from mmcls.models.backbones.base_backbone import BaseBackbone
-from mmcls.models.builder import BACKBONES
-from mmcls.models.utils import resize_pos_embed
 from mmcv.cnn.bricks.transformer import PatchEmbed
+from mmcv.runner import load_checkpoint
 from mmcv.runner.base_module import BaseModule, ModuleList
+from mmseg.models import BACKBONES
+from mmseg.utils import get_root_logger
 from torch.nn import functional as F
 
 from mmseg_custom.models.backbones.scan import s_hw, s_wh, s_rhw, s_hrw, s_wrh, s_rwh, sr_hw, sr_wh, sr_rhw, sr_hrw, \
     sr_rwh, sr_wrh
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
-from mmseg_custom.models.utils import DropPath
+from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
 logger = logging.getLogger(__name__)
 
@@ -425,7 +426,7 @@ class Block(BaseModule):
 
 
 @BACKBONES.register_module()
-class VVRWKV(BaseBackbone):
+class VVRWKV(BaseModule):
     def __init__(self,
                  img_size=224,
                  patch_size=16,
@@ -445,13 +446,26 @@ class VVRWKV(BaseBackbone):
                  hidden_rate=4,
                  final_norm=True,
                  interpolate_mode='bicubic',
+                 pretrained=None,
                  with_cp=False,
                  init_cfg=None):
+        assert not (init_cfg and pretrained), \
+            'init_cfg and pretrained cannot be specified at the same time'
+        if isinstance(pretrained, str):
+            warnings.warn('DeprecationWarning: pretrained is deprecated, '
+                          'please use "init_cfg" instead')
+            self.init_cfg = dict(type='Pretrained', checkpoint=pretrained)
+        elif pretrained is None:
+            self.init_cfg = init_cfg
+        else:
+            raise TypeError('pretrained must be a str or None')
         super().__init__(init_cfg)
         self.embed_dims = embed_dims
         self.num_extra_tokens = 0
         self.num_layers = depth
         self.drop_path_rate = drop_path_rate
+        logger = get_root_logger()
+        logger.info(f'layer_scale: {init_values is not None}')
 
         self.patch_embed = PatchEmbed(
             in_channels=in_channels,
@@ -506,6 +520,23 @@ class VVRWKV(BaseBackbone):
         if final_norm:
             self.ln1 = nn.LayerNorm(self.embed_dims)
 
+    def init_weights(self):
+        logger = get_root_logger()
+        if self.init_cfg is None:
+            logger.warn(f'No pre-trained weights for '
+                        f'{self.__class__.__name__}, '
+                        f'training start from scratch')
+        else:
+            assert 'checkpoint' in self.init_cfg, f'Only support ' \
+                                                  f'specify `Pretrained` in ' \
+                                                  f'`init_cfg` in ' \
+                                                  f'{self.__class__.__name__} '
+            load_checkpoint(self,
+                            self.init_cfg['checkpoint'], map_location='cpu', logger=logger, strict=False,
+                            revise_keys=[(r'^backbone.', '')])
+            logger.warn(f'Load pre-trained model for '
+                        f'{self.__class__.__name__} from original repo')
+
     def forward(self, x):
         B = x.shape[0]
         x, patch_resolution = self.patch_embed(x)
@@ -545,6 +576,7 @@ if __name__ == "__main__":
         drop_rate=0.,
         embed_dims=192,
         depth=12,
+        pretrained="checkpoints/latest.pth"
     ).cuda()
 
     x = torch.randn(1, 3, 224, 224).cuda()

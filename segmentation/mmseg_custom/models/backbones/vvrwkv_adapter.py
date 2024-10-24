@@ -7,19 +7,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from mmseg.models.builder import BACKBONES
-from ops.modules import MSDeformAttn
 from timm.models.layers import trunc_normal_
 from torch.nn.init import normal_
 
-from .base.vrwkv import VRWKV
-from .adapter_modules import SpatialPriorModule, InteractionBlock, deform_inputs
+from mmseg_custom.models.backbones.base.vvrwkv import VVRWKV
 from mmseg_custom.models.utils import resize_pos_embed
+from ops.modules import MSDeformAttn
+from .adapter_modules import SpatialPriorModule, InteractionBlock, deform_inputs
 
 _logger = logging.getLogger(__name__)
 
 
 @BACKBONES.register_module()
-class VRWKV_Adapter(VRWKV):
+class VVRWKV_Adapter(VVRWKV):
     def __init__(self, pretrain_size=224, conv_inplane=64, n_points=4, deform_num_heads=6,
                  init_values_inject=0., interaction_indexes=None, with_cffn=True, cffn_ratio=0.25,
                  deform_ratio=1.0, add_rwkv_feature=True, use_extra_extractor=True, with_cp=False, *args, **kwargs):

@@ -1,21 +1,19 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Sequence
-import warnings
 import math
+import warnings
+from typing import Sequence
 
-import logging
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
 import torch.utils.checkpoint as cp
-
+from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner import load_checkpoint
 from mmcv.runner.base_module import BaseModule, ModuleList
-from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmseg.models.builder import BACKBONES
 from mmseg.utils import get_root_logger
-from mmseg_custom.models.utils import resize_pos_embed, DropPath
+
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
+from mmseg_custom.models.utils import resize_pos_embed, DropPath
 
 
 def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
