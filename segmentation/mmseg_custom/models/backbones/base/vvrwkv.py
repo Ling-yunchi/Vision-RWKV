@@ -15,8 +15,7 @@ from mmseg.models import BACKBONES
 from mmseg.utils import get_root_logger
 from torch.nn import functional as F
 
-from mmseg_custom.models.backbones.scan import s_hw, s_wh, s_rhw, s_hrw, s_wrh, s_rwh, sr_hw, sr_wh, sr_rhw, sr_hrw, \
-    sr_rwh, sr_wrh
+from mmseg_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhrw, s_rwrh, sr_rhrw, sr_rwrh
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
 from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
@@ -41,103 +40,6 @@ def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
     return output.flatten(2).transpose(1, 2)
 
 
-class RevIN(nn.Module):
-    def __init__(self, num_features: int, eps=1e-5, affine=True):
-        """
-        :param num_features: the number of features or channels
-        :param eps: a value added for numerical stability
-        :param affine: if True, RevIN has learnable affine parameters
-        """
-        super(RevIN, self).__init__()
-
-        self.num_features = num_features
-        self.eps = eps
-        self.affine = affine
-
-        if self.affine:
-            # initialize RevIN params: (C,)
-            self.affine_weight = nn.Parameter(torch.ones(self.num_features))
-            self.affine_bias = nn.Parameter(torch.zeros(self.num_features))
-
-    def forward(self, x, norm: bool):
-        h, w = x.shape[-2:]
-        x = rearrange(x, "b c h w -> b (h w) c")
-        if norm:
-            self._get_statistics(x)
-            x = self._normalize(x)
-        else:
-            x = self._denormalize(x)
-        x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-        return x
-
-    def _get_statistics(self, x):
-        dim2reduce = tuple(range(1, x.ndim - 1))
-        self.mean = torch.mean(x, dim=dim2reduce, keepdim=True).detach()
-        self.stdev = torch.sqrt(
-            torch.var(x, dim=dim2reduce, keepdim=True, unbiased=False) + self.eps
-        ).detach()
-
-    def _normalize(self, x):
-        x = x - self.mean
-        x = x / self.stdev
-        if self.affine:
-            x = x * self.affine_weight
-            x = x + self.affine_bias
-        return x
-
-    def _denormalize(self, x):
-        if self.affine:
-            x = x - self.affine_bias
-            x = x / (self.affine_weight + self.eps * self.eps)
-        x = x * self.stdev
-        x = x + self.mean
-        return x
-
-
-class DenseMoE(nn.Module):
-    def __init__(
-            self,
-            in_channels,
-            drop=0.1,
-            revin_affine=True,
-    ):
-        """
-        Dense MoE for Image
-        :param in_channels: input image channels
-        :param experts: num of expert, each expert input shape equal to output shape
-        :param drop: drop rate
-        :param revin_affine: use revin learnable param
-        """
-        super(DenseMoE, self).__init__()
-        self.drop = drop
-        self.revin_affine = revin_affine
-
-        self.gate = nn.Conv2d(in_channels, self.num_experts, 1)
-
-        self.dropout = nn.Dropout2d(drop)
-        self.rev = RevIN(in_channels, affine=revin_affine)
-
-    def forward(self, x):
-        x = self.rev(x, True)
-        x = self.dropout(x)  # (B, C, H, W)
-
-        score = F.softmax(self.gate(x), dim=1)  # (B, E, H, W)
-        score = score.unsqueeze(1)  # (B, 1, E, H, W)
-
-        scan_func = [s_hw, s_wh, s_rhw, s_hrw, s_rwh, s_wrh]
-        re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_hrw, sr_rwh, sr_wrh]
-
-        expert_outputs = torch.stack(
-            [self.experts[i](x) for i in range(self.num_experts)], dim=2
-        )  # (B, C, E, H, W)
-
-        prediction = torch.sum(expert_outputs * score, dim=2)  # [B, C, H, W]
-
-        prediction = self.rev(prediction, False)
-
-        return prediction
-
-
 class VRWKV_SpatialMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
                  channel_gamma=1 / 4, shift_pixel=1, init_mode='fancy',
@@ -158,9 +60,6 @@ class VRWKV_SpatialMix(BaseModule):
 
         self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
-        self.dropout = nn.Dropout2d(drop)
-        self.rev = RevIN(n_embd, affine=revin_affine)
-
         self._init_weights(init_mode)
 
         if shift_pixel > 0:
@@ -175,7 +74,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
         self.receptance = nn.Linear(n_embd, self.attn_sz * self.num_experts, bias=False)
         if key_norm:
-            self.key_norm = nn.LayerNorm(n_embd * self.num_experts)
+            self.key_norm = nn.LayerNorm(self.attn_sz)
         else:
             self.key_norm = None
         self.output = nn.Linear(self.attn_sz, n_embd, bias=False)
@@ -211,14 +110,14 @@ class VRWKV_SpatialMix(BaseModule):
                 self.spatial_mix_v = nn.Parameter(torch.pow(x, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
                 self.spatial_mix_r = nn.Parameter(torch.pow(x, 0.5 * ratio_1_to_almost0))
         elif init_mode == 'local':
-            self.spatial_decay = nn.Parameter(torch.ones(self.n_embd))
-            self.spatial_first = nn.Parameter(torch.ones(self.n_embd))
+            self.spatial_decay = nn.Parameter(torch.ones(multi_dim))
+            self.spatial_first = nn.Parameter(torch.ones(multi_dim))
             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]))
             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]))
             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]))
         elif init_mode == 'global':
-            self.spatial_decay = nn.Parameter(torch.zeros(self.n_embd))
-            self.spatial_first = nn.Parameter(torch.zeros(self.n_embd))
+            self.spatial_decay = nn.Parameter(torch.zeros(multi_dim))
+            self.spatial_first = nn.Parameter(torch.zeros(multi_dim))
             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
@@ -252,40 +151,43 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
-            x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-            x = self.rev(x, True)
-            x = self.dropout(x)  # b c h w
-
-            score = F.softmax(self.gate(x), dim=1)  # b e h w (e=6)
+            score = F.softmax(
+                self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
+            )  # b e h w
             score = score.unsqueeze(1)  # b 1 e h w
 
-            x = rearrange(x, "b c h w -> b (h w) c")
             sr, k, v = self.jit_func(x, patch_resolution)
 
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
-            scan_func = [s_hw, s_wh, s_rhw, s_hrw]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_hrw]
+            scan_func = [s_hw, s_wh, s_rhrw, s_rwrh]
+            re_scan_func = [sr_hw, sr_wh, sr_rhrw, sr_rwrh]
 
-            ks = torch.cat([f(k) for f in scan_func], dim=2)  # b (h w) (c e)
-            vs = torch.cat([f(v) for f in scan_func], dim=2)  # b (h w) (c e)
+            ks = torch.cat(
+                [scan_func[i](k) for i in range(self.num_experts)], dim=2
+            )  # b (h w) (c e)
+            vs = torch.cat(
+                [scan_func[i](v) for i in range(self.num_experts)], dim=2
+            )  # b (h w) (c e)
 
-            expert_outputs = RUN_CUDA(B, T, C * self.num_experts,
-                                      self.spatial_decay / T, self.spatial_first / T, ks, vs)
+            expert_output = RUN_CUDA(B, T, C * self.num_experts,
+                                     self.spatial_decay / T, self.spatial_first / T, ks, vs)
+            expert_outputs = [
+                expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
+                for i in range(self.num_experts)
+            ]  # (b (h w) c) * e
+            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w),
+                                        "b c h w -> b (h w) c") for i in range(self.num_experts)]
             if self.key_norm is not None:
-                expert_outputs = self.key_norm(expert_outputs)
-            expert_outputs = torch.cat([
-                rearrange(re_scan_func[i](expert_outputs[:, :, i * self.attn_sz:(i + 1) * self.attn_sz], h, w),
-                          "b c h w -> b (h w) c") for i in range(self.num_experts)
-            ], dim=2)  # b (h w) (c e)
+                expert_outputs = [self.key_norm(eo) for eo in expert_outputs]
+            expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
             expert_outputs = sr * expert_outputs  # b (h w) (c e)
             expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
                                        h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
 
             prediction = torch.sum(expert_outputs * score, dim=2)  # b c h w
-            x = self.rev(prediction, False)
-            x = rearrange(x, "b c h w -> b (h w) c")
+            x = rearrange(prediction, "b c h w -> b (h w) c")
 
             x = self.output(x)
             return x
