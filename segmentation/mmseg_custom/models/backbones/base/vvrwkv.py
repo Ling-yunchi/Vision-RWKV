@@ -43,7 +43,7 @@ def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
 class VRWKV_SpatialMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
                  channel_gamma=1 / 4, shift_pixel=1, init_mode='fancy',
-                 key_norm=False, drop=0.1, revin_affine=True, with_cp=False):
+                 key_norm=False, merge_size=(14, 14), merge_mode='bilinear', with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.n_layer = n_layer
@@ -54,11 +54,13 @@ class VRWKV_SpatialMix(BaseModule):
         self.shift_mode = shift_mode
 
         # MoE System
-        self.drop = drop
-        self.revin_affine = revin_affine
         self.num_experts = 4
+        self.merge_size = merge_size
+        self.merge_mode = merge_mode
+        h, w = merge_size
+        self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
 
-        self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
+        # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self._init_weights(init_mode)
 
@@ -145,17 +147,21 @@ class VRWKV_SpatialMix(BaseModule):
 
         return sr, k, v
 
+    def get_merge_weight(self, patch_resolution):
+        if patch_resolution == self.merge_size:
+            return self.merge_weight.unsqueeze(0).unsqueeze(0)
+        return F.interpolate(self.merge_weight.unsqueeze(0), size=patch_resolution, mode=self.merge_mode).unsqueeze(0)
+
     def forward(self, x, patch_resolution=None):
         def _inner_forward(x):
             B, T, C = x.size()
             self.device = x.device
 
             h, w = patch_resolution
-            score = F.softmax(
-                self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            )  # b e h w
-            score = score.unsqueeze(1)  # b 1 e h w
-
+            # score = F.softmax(
+            #     self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
+            # )  # b e h w
+            # score = score.unsqueeze(1)  # b 1 e h w
             sr, k, v = self.jit_func(x, patch_resolution)
 
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
@@ -186,7 +192,8 @@ class VRWKV_SpatialMix(BaseModule):
             expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
                                        h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
 
-            prediction = torch.sum(expert_outputs * score, dim=2)  # b c h w
+            merge_weight = self.get_merge_weight(patch_resolution)  # 1 1 e h w
+            prediction = torch.sum(expert_outputs * merge_weight, dim=2)  # b c h w
             x = rearrange(prediction, "b c h w -> b (h w) c")
 
             x = self.output(x)
@@ -277,7 +284,7 @@ class Block(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
                  channel_gamma=1 / 4, shift_pixel=1, drop_path=0., hidden_rate=4,
                  init_mode='fancy', init_values=None, post_norm=False, key_norm=False,
-                 with_cp=False):
+                 merge_size=(14, 14), merge_mode='bilinear', with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.ln1 = nn.LayerNorm(n_embd)
@@ -288,11 +295,12 @@ class Block(BaseModule):
 
         self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, shift_mode,
                                     channel_gamma, shift_pixel, init_mode,
-                                    key_norm=key_norm)
+                                    key_norm=key_norm, merge_size=merge_size,
+                                    merge_mode=merge_mode, with_cp=with_cp)
 
         self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, shift_mode,
                                     channel_gamma, shift_pixel, hidden_rate,
-                                    init_mode, key_norm=key_norm)
+                                    init_mode, key_norm=key_norm, with_cp=with_cp)
         self.layer_scale = (init_values is not None)
         self.post_norm = post_norm
         if self.layer_scale:
@@ -349,6 +357,8 @@ class VVRWKV(BaseModule):
                  final_norm=True,
                  interpolate_mode='bicubic',
                  pretrained=None,
+                 merge_size=(14, 14),  # pretrained size / patch_size = 224 / 16
+                 merge_mode='bilinear',
                  with_cp=False,
                  init_cfg=None):
         assert not (init_cfg and pretrained), \
@@ -414,6 +424,8 @@ class VVRWKV(BaseModule):
                 init_mode=init_mode,
                 post_norm=post_norm,
                 key_norm=key_norm,
+                merge_size=merge_size,
+                merge_mode=merge_mode,
                 init_values=init_values,
                 with_cp=with_cp
             ))
