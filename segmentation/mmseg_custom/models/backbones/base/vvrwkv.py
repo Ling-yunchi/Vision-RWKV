@@ -13,9 +13,8 @@ from mmcv.runner import load_checkpoint
 from mmcv.runner.base_module import BaseModule, ModuleList
 from mmseg.models import BACKBONES
 from mmseg.utils import get_root_logger
-from torch.nn import functional as F
 
-from mmseg_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhrw, s_rwrh, sr_rhrw, sr_rwrh
+from mmseg_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
 from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
@@ -43,7 +42,7 @@ def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
 class VRWKV_SpatialMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
                  channel_gamma=1 / 4, shift_pixel=1, init_mode='fancy',
-                 key_norm=False, merge_size=(14, 14), merge_mode='bilinear', with_cp=False):
+                 key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.n_layer = n_layer
@@ -55,10 +54,10 @@ class VRWKV_SpatialMix(BaseModule):
 
         # MoE System
         self.num_experts = 4
-        self.merge_size = merge_size
-        self.merge_mode = merge_mode
-        h, w = merge_size
-        self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
+        # self.merge_size = merge_size
+        # self.merge_mode = merge_mode
+        # h, w = merge_size
+        # self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
 
         # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
@@ -74,7 +73,7 @@ class VRWKV_SpatialMix(BaseModule):
 
         self.key = nn.Linear(n_embd, self.attn_sz, bias=False)
         self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.receptance = nn.Linear(n_embd, self.attn_sz * self.num_experts, bias=False)
+        self.receptance = nn.Linear(n_embd, self.attn_sz, bias=False)
         if key_norm:
             self.key_norm = nn.LayerNorm(self.attn_sz)
         else:
@@ -147,11 +146,6 @@ class VRWKV_SpatialMix(BaseModule):
 
         return sr, k, v
 
-    def get_merge_weight(self, patch_resolution):
-        if patch_resolution == self.merge_size:
-            return self.merge_weight.unsqueeze(0).unsqueeze(0)
-        return F.interpolate(self.merge_weight.unsqueeze(0), size=patch_resolution, mode=self.merge_mode).unsqueeze(0)
-
     def forward(self, x, patch_resolution=None):
         def _inner_forward(x):
             B, T, C = x.size()
@@ -167,8 +161,8 @@ class VRWKV_SpatialMix(BaseModule):
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
-            scan_func = [s_hw, s_wh, s_rhrw, s_rwrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhrw, sr_rwrh]
+            scan_func = [s_hw, s_wh, s_rhw, s_wrh]
+            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_rhw]
 
             ks = torch.cat(
                 [scan_func[i](k) for i in range(self.num_experts)], dim=2
@@ -185,17 +179,10 @@ class VRWKV_SpatialMix(BaseModule):
             ]  # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w),
                                         "b c h w -> b (h w) c") for i in range(self.num_experts)]
+            expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
             if self.key_norm is not None:
-                expert_outputs = [self.key_norm(eo) for eo in expert_outputs]
-            expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
-            expert_outputs = sr * expert_outputs  # b (h w) (c e)
-            expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
-                                       h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
-
-            merge_weight = self.get_merge_weight(patch_resolution)  # 1 1 e h w
-            prediction = torch.sum(expert_outputs * merge_weight, dim=2)  # b c h w
-            x = rearrange(prediction, "b c h w -> b (h w) c")
-
+                expert_output = self.key_norm(expert_output)
+            x = expert_output * sr
             x = self.output(x)
             return x
 
@@ -283,8 +270,7 @@ class VRWKV_ChannelMix(BaseModule):
 class Block(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift',
                  channel_gamma=1 / 4, shift_pixel=1, drop_path=0., hidden_rate=4,
-                 init_mode='fancy', init_values=None, post_norm=False, key_norm=False,
-                 merge_size=(14, 14), merge_mode='bilinear', with_cp=False):
+                 init_mode='fancy', init_values=None, post_norm=False, key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.ln1 = nn.LayerNorm(n_embd)
@@ -295,8 +281,7 @@ class Block(BaseModule):
 
         self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, shift_mode,
                                     channel_gamma, shift_pixel, init_mode,
-                                    key_norm=key_norm, merge_size=merge_size,
-                                    merge_mode=merge_mode, with_cp=with_cp)
+                                    key_norm=key_norm, with_cp=with_cp)
 
         self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, shift_mode,
                                     channel_gamma, shift_pixel, hidden_rate,
@@ -357,8 +342,6 @@ class VVRWKV(BaseModule):
                  final_norm=True,
                  interpolate_mode='bicubic',
                  pretrained=None,
-                 merge_size=(14, 14),  # pretrained size / patch_size = 224 / 16
-                 merge_mode='bilinear',
                  with_cp=False,
                  init_cfg=None):
         assert not (init_cfg and pretrained), \
@@ -424,8 +407,6 @@ class VVRWKV(BaseModule):
                 init_mode=init_mode,
                 post_norm=post_norm,
                 key_norm=key_norm,
-                merge_size=merge_size,
-                merge_mode=merge_mode,
                 init_values=init_values,
                 with_cp=with_cp
             ))
