@@ -56,7 +56,9 @@ class VRWKV_SpatialMix(BaseModule):
         # self.merge_size = merge_size
         # self.merge_mode = merge_mode
         # h, w = merge_size
-        self.merge_weight = nn.Parameter(torch.ones(self.num_experts))  # e
+        merge_weight = torch.zeros(self.num_experts)
+        merge_weight[0] = 1
+        self.merge_weight = nn.Parameter(merge_weight)  # e
 
         # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
