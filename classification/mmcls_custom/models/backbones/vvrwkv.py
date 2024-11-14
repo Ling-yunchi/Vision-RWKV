@@ -13,8 +13,7 @@ from mmcls.models.utils import resize_pos_embed
 from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw
-from mmcls_custom.models.backbones.wkv import RUN_CUDA
+from mmcls_custom.models.backbones.wkv2d import RUN_CUDA_2d
 from mmcls_custom.models.utils import DropPath
 
 logger = logging.getLogger(__name__)
@@ -47,23 +46,10 @@ class VRWKV_SpatialMix(BaseModule):
         self.n_layer = n_layer
         self.n_embd = n_embd
         self.device = None
-        self.attn_sz = n_embd
+        attn_sz = n_embd
+        self._init_weights(init_mode)
         self.shift_pixel = shift_pixel
         self.shift_mode = shift_mode
-
-        # MoE System
-        self.num_experts = 4
-        # self.merge_size = merge_size
-        # self.merge_mode = merge_mode
-        # h, w = merge_size
-        merge_weight = torch.zeros(self.num_experts)
-        merge_weight[0] = 1
-        self.merge_weight = nn.Parameter(merge_weight)  # e
-
-        # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
-
-        self._init_weights(init_mode)
-
         if shift_pixel > 0:
             self.shift_func = eval(shift_mode)
             self.channel_gamma = channel_gamma
@@ -72,14 +58,14 @@ class VRWKV_SpatialMix(BaseModule):
             self.spatial_mix_v = None
             self.spatial_mix_r = None
 
-        self.key = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.receptance = nn.Linear(n_embd, self.attn_sz, bias=False)
+        self.key = nn.Linear(n_embd, attn_sz, bias=False)
+        self.value = nn.Linear(n_embd, attn_sz, bias=False)
+        self.receptance = nn.Linear(n_embd, attn_sz, bias=False)
         if key_norm:
-            self.key_norm = nn.LayerNorm(self.attn_sz)
+            self.key_norm = nn.LayerNorm(n_embd)
         else:
             self.key_norm = None
-        self.output = nn.Linear(self.attn_sz, n_embd, bias=False)
+        self.output = nn.Linear(attn_sz, n_embd, bias=False)
 
         self.key.scale_init = 0
         self.receptance.scale_init = 0
@@ -88,21 +74,20 @@ class VRWKV_SpatialMix(BaseModule):
         self.with_cp = with_cp
 
     def _init_weights(self, init_mode):
-        multi_dim = self.n_embd * self.num_experts
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
                 ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer))  # 1 to ~0
 
                 # fancy time_decay
-                decay_speed = torch.ones(multi_dim)
-                for h in range(multi_dim):
-                    decay_speed[h] = -5 + 8 * (h / (multi_dim - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+                decay_speed = torch.ones(self.n_embd)
+                for h in range(self.n_embd):
+                    decay_speed[h] = -5 + 8 * (h / (self.n_embd - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
                 self.spatial_decay = nn.Parameter(decay_speed)
 
                 # fancy time_first
-                zigzag = (torch.tensor([(i + 1) % 3 - 1 for i in range(multi_dim)]) * 0.5)
-                self.spatial_first = nn.Parameter(torch.ones(multi_dim) * math.log(0.3) + zigzag)
+                zigzag = (torch.tensor([(i + 1) % 3 - 1 for i in range(self.n_embd)]) * 0.5)
+                self.spatial_first = nn.Parameter(torch.ones(self.n_embd) * math.log(0.3) + zigzag)
 
                 # fancy time_mix
                 x = torch.ones(1, 1, self.n_embd)
@@ -112,14 +97,14 @@ class VRWKV_SpatialMix(BaseModule):
                 self.spatial_mix_v = nn.Parameter(torch.pow(x, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
                 self.spatial_mix_r = nn.Parameter(torch.pow(x, 0.5 * ratio_1_to_almost0))
         elif init_mode == 'local':
-            self.spatial_decay = nn.Parameter(torch.ones(multi_dim))
-            self.spatial_first = nn.Parameter(torch.ones(multi_dim))
+            self.spatial_decay = nn.Parameter(torch.ones(self.n_embd))
+            self.spatial_first = nn.Parameter(torch.ones(self.n_embd))
             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]))
             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]))
             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]))
         elif init_mode == 'global':
-            self.spatial_decay = nn.Parameter(torch.zeros(multi_dim))
-            self.spatial_first = nn.Parameter(torch.zeros(multi_dim))
+            self.spatial_decay = nn.Parameter(torch.zeros(self.n_embd))
+            self.spatial_first = nn.Parameter(torch.zeros(self.n_embd))
             self.spatial_mix_k = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
             self.spatial_mix_v = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
             self.spatial_mix_r = nn.Parameter(torch.ones([1, 1, self.n_embd]) * 0.5)
@@ -152,39 +137,11 @@ class VRWKV_SpatialMix(BaseModule):
             B, T, C = x.size()
             self.device = x.device
 
-            h, w = patch_resolution
-            # score = F.softmax(
-            #     self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            # )  # b e h w
-            # score = score.unsqueeze(1)  # b 1 e h w
             sr, k, v = self.jit_func(x, patch_resolution)
-
-            k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
-            v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
-
-            scan_func = [s_hw, s_wh, s_rhw, s_wrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_rhw]
-
-            ks = torch.cat(
-                [scan_func[i](k) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
-            vs = torch.cat(
-                [scan_func[i](v) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
-
-            expert_output = RUN_CUDA(B, T, C * self.num_experts,
-                                     self.spatial_decay / T, self.spatial_first / T, ks, vs)
-            expert_outputs = [
-                expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
-                for i in range(self.num_experts)
-            ]  # (b (h w) c) * e
-            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
-                              for i in range(self.num_experts)]
-            expert_outputs = [expert_outputs[i] * self.merge_weight[i] for i in range(self.num_experts)]
-            expert_output = torch.sum(torch.stack(expert_outputs, dim=0), dim=0)
+            x = RUN_CUDA_2d(B, T, C, self.spatial_decay / T, self.spatial_first / T, k, v)
             if self.key_norm is not None:
-                expert_output = self.key_norm(expert_output)
-            x = expert_output * sr
+                x = self.key_norm(x)
+            x = sr * x
             x = self.output(x)
             return x
 
