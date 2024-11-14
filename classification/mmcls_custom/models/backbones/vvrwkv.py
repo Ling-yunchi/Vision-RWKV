@@ -135,10 +135,11 @@ class VRWKV_SpatialMix(BaseModule):
     def forward(self, x, patch_resolution=None):
         def _inner_forward(x):
             B, T, C = x.size()
+            H, W = patch_resolution
             self.device = x.device
 
             sr, k, v = self.jit_func(x, patch_resolution)
-            x = RUN_CUDA_2d(B, T, C, self.spatial_decay / T, self.spatial_first / T, k, v)
+            x = RUN_CUDA_2d(B, T, C, H, W, self.spatial_decay / T, self.spatial_first / T, k, v)
             if self.key_norm is not None:
                 x = self.key_norm(x)
             x = sr * x
