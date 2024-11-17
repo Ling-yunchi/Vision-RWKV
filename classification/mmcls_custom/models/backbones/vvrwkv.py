@@ -141,7 +141,10 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             sr, k, v = self.jit_func(x, patch_resolution)
+            k = rearrange(k, 'b (h w) c -> b h w c', h=H, w=W)
+            v = rearrange(v, 'b (h w) c -> b h w c', h=H, w=W)
             x = self.wkv2d(B, H, W, C, self.spatial_decay, self.spatial_first, k, v)
+            x = rearrange(x, 'b h w c -> b (h w) c')
             if self.key_norm is not None:
                 x = self.key_norm(x)
             x = sr * x
