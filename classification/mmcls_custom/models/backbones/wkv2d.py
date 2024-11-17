@@ -4,6 +4,7 @@ from torch import nn
 
 
 def create_distance_matrix(kernel_size, w, u):
+    device = w.device
     # 计算中心位置的索引
     center_idx = kernel_size // 2
 
@@ -16,6 +17,7 @@ def create_distance_matrix(kernel_size, w, u):
 
     # 计算距离矩阵：绝对距离之和
     distance_matrix = torch.abs(x_grid - center_idx) + torch.abs(y_grid - center_idx)
+    distance_matrix = distance_matrix.to(device)
 
     # 使用距离矩阵进行权重计算
     weight_matrix = -distance_matrix.unsqueeze(0) * w.unsqueeze(1).unsqueeze(
@@ -31,14 +33,13 @@ class WKV2D(nn.Module):
         super().__init__()
 
     def forward(self, B, H, W, C, w, u, k, v):
-        device = w.device
         kernel_size = 2 * (max(H, W) - 1) + 1
         pad = kernel_size // 2
 
         # 枃建距离矩阵
         distance_weights = create_distance_matrix(
             kernel_size, w, u
-        ).to(device)  # Shape: (C, kernel_size, kernel_size)
+        )  # Shape: (C, kernel_size, kernel_size)
 
         # 处理k的展开
         k = k.permute(0, 3, 1, 2)  # 转换为 B x C x H x W
