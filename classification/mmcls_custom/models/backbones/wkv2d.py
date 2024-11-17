@@ -1,107 +1,68 @@
-import os
-import time
-
 import torch
-from torch.utils.cpp_extension import load
-
-T_MAX = 8192  # increase this if your ctx_len is long [NOTE: TAKES LOTS OF VRAM!]
-# it's possible to go beyond CUDA limitations if you slice the ctx and pass the hidden state in each slice
-
-file_path = os.path.dirname(os.path.realpath(__file__))
-is_windows = os.name == "nt"
-build_dir = f"{file_path}/build_2d"
-if not os.path.exists(build_dir):
-    os.makedirs(build_dir)
-
-wkv_cuda = load(
-    name="wkv",
-    sources=[f"{file_path}/cuda/wkv_2d_op.cpp", f"{file_path}/cuda/wkv_2d_cuda.cu"],
-    verbose=True,
-    build_directory=build_dir,
-    extra_cuda_cflags=[
-        "-res-usage",
-        f"--maxrregcount{'=' if is_windows else ' '}60",
-        "--use_fast_math",
-        "-O3",
-        "-Xptxas",
-        "-O3",
-        f"-DTmax={T_MAX}",
-    ],
-)
+import torch.nn.functional as F
+from torch import nn
 
 
-class WKV2d(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, B, T, C, H, W, w, u, k, v):
-        ctx.B = B
-        ctx.T = T
-        ctx.C = C
-        ctx.H = H
-        ctx.W = W
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
+def create_distance_matrix(kernel_size, w, u):
+    # 计算中心位置的索引
+    center_idx = kernel_size // 2
 
-        half_mode = w.dtype == torch.half
-        w = w.float().contiguous()
-        u = u.float().contiguous()
-        k = k.float().contiguous()
-        v = v.float().contiguous()
+    # 创建坐标网格
+    x_coords = torch.arange(kernel_size)
+    y_coords = torch.arange(kernel_size)
+    y_grid, x_grid = torch.meshgrid(
+        y_coords, x_coords, indexing="ij"
+    )  # `indexing='ij'` 确保y在第0维，x在第1维
 
-        ctx.save_for_backward(w, u, k, v)
-        y = torch.empty((B, T, C), device="cuda", memory_format=torch.contiguous_format)
-        wkv_cuda.forward(B, T, C, H, W, w, u, k, v, y)
-        if half_mode:
-            y = y.half()
-        return y
+    # 计算距离矩阵：绝对距离之和
+    distance_matrix = torch.abs(x_grid - center_idx) + torch.abs(y_grid - center_idx)
 
-    @staticmethod
-    def backward(ctx, gy):
-        B = ctx.B
-        T = ctx.T
-        C = ctx.C
-        H = ctx.H
-        W = ctx.W
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-        w, u, k, v = ctx.saved_tensors
-        gw = torch.zeros((B, C), device="cuda").contiguous()
-        gu = torch.zeros((B, C), device="cuda").contiguous()
-        gk = torch.zeros((B, T, C), device="cuda").contiguous()
-        gv = torch.zeros((B, T, C), device="cuda").contiguous()
-        half_mode = gy.dtype == torch.half
-        wkv_cuda.backward(B, T, C, H, W, w, u, k, v, gy.contiguous(), gw, gu, gk, gv)
-        if half_mode:
-            gw = torch.sum(gw.half(), dim=0)
-            gu = torch.sum(gu.half(), dim=0)
-            return (
-                None,
-                None,
-                None,
-                None,
-                None,
-                gw.half(),
-                gu.half(),
-                gk.half(),
-                gv.half(),
-            )
-        else:
-            gw = torch.sum(gw, dim=0)
-            gu = torch.sum(gu, dim=0)
-            return (None, None, None, None, None, gw, gu, gk, gv)
+    # 使用距离矩阵进行权重计算
+    weight_matrix = -distance_matrix.unsqueeze(0) * w.unsqueeze(1).unsqueeze(
+        2
+    )  # 广播到每个通道
+    weight_matrix[:, center_idx, center_idx] += u  # 中心元素加上每个通道的u
+
+    return weight_matrix  # 不再展开为1D，保持为2D
 
 
-def RUN_CUDA_2d(B, T, C, H, W, w, u, k, v):
-    return WKV2d.apply(B, T, C, H, W, w.cuda(), u.cuda(), k.cuda(), v.cuda())
+class WKV2D(nn.Module):
+    def __init__(self):
+        super().__init__()
 
+    def forward(self, B, H, W, C, w, u, k, v):
+        kernel_size = 2 * (max(H, W) - 1) + 1
+        pad = kernel_size // 2
 
-if __name__ == "__main__":
-    H, W = 2, 2
-    B, T, C = 2, H * W, 1
-    w = torch.randn((B, C), device="cuda").requires_grad_()
-    u = torch.randn((B, C), device="cuda").requires_grad_()
-    k = torch.randn((B, T, C), device="cuda").requires_grad_()
-    v = torch.randn((B, T, C), device="cuda").requires_grad_()
-    st = time.time()
-    y_2d = RUN_CUDA_2d(B, T, C, H, W, w, u, k, v)
-    print(f"{time.time() - st:.20f}s")
-    print(y_2d)
+        # 枃建距离矩阵
+        distance_weights = create_distance_matrix(
+            kernel_size, w, u
+        )  # Shape: (C, kernel_size, kernel_size)
+
+        # 处理k的展开
+        k = k.permute(0, 3, 1, 2)  # 转换为 B x C x H x W
+        unfold_k = F.unfold(k, kernel_size=(kernel_size, kernel_size), padding=pad)
+        unfolded_k = unfold_k.view(
+            B, C, kernel_size * kernel_size, H * W
+        )  # B x C x (K*K) x (H*W)
+
+        # 应用距离权重并求和得到调整后的k
+        distance_weights = distance_weights.view(
+            C, kernel_size * kernel_size, 1
+        )  # C x (K*K) x 1
+        weight_adjusted_k = unfolded_k + distance_weights  # B x C x (K*K) x (H*W)
+        weight_adjusted_k = F.relu(weight_adjusted_k, inplace=True)
+        k_adjusted = weight_adjusted_k.sum(dim=2)  # B x C x (H * W)
+
+        # 计算exp(k)
+        exp_k = torch.exp(k_adjusted)  # B x C x (H * W)
+
+        # 处理v并与exp(k)相乘
+        v = v.permute(0, 3, 1, 2).reshape(B, C, -1)  # B x C x (H * W)
+        result = exp_k * v  # 逐元素相乘 B x C x (H * W)
+
+        # 将结果reshape为 B x C x H x W
+        output = result.view(B, C, H, W)
+        output = output.permute(0, 2, 3, 1)  # 转换回 B x H x W x C
+
+        return output

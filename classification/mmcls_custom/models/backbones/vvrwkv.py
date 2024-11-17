@@ -13,7 +13,7 @@ from mmcls.models.utils import resize_pos_embed
 from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls_custom.models.backbones.wkv2d import RUN_CUDA_2d
+from mmcls_custom.models.backbones.wkv2d import WKV2D
 from mmcls_custom.models.utils import DropPath
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ class VRWKV_SpatialMix(BaseModule):
         self.output.scale_init = 0
 
         self.with_cp = with_cp
+
+        self.wkv2d = WKV2D()
 
     def _init_weights(self, init_mode):
         if init_mode == 'fancy':
@@ -139,7 +141,7 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             sr, k, v = self.jit_func(x, patch_resolution)
-            x = RUN_CUDA_2d(B, T, C, H, W, self.spatial_decay, self.spatial_first, k, v)
+            x = self.wkv2d(B, H, W, C, self.spatial_decay, self.spatial_first, k, v)
             if self.key_norm is not None:
                 x = self.key_norm(x)
             x = sr * x
