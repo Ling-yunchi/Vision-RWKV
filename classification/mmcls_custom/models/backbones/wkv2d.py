@@ -31,13 +31,14 @@ class WKV2D(nn.Module):
         super().__init__()
 
     def forward(self, B, H, W, C, w, u, k, v):
+        device = w.device
         kernel_size = 2 * (max(H, W) - 1) + 1
         pad = kernel_size // 2
 
         # 枃建距离矩阵
         distance_weights = create_distance_matrix(
             kernel_size, w, u
-        )  # Shape: (C, kernel_size, kernel_size)
+        ).to(device)  # Shape: (C, kernel_size, kernel_size)
 
         # 处理k的展开
         k = k.permute(0, 3, 1, 2)  # 转换为 B x C x H x W
