@@ -57,7 +57,7 @@ class VRWKV_SpatialMix(BaseModule):
         # self.merge_mode = merge_mode
         # h, w = merge_size
         # self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
-        self.expert_norm = nn.LayerNorm(self.attn_sz)
+        self.expert_norm = nn.InstanceNorm2d(self.attn_sz)
 
         # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
@@ -179,7 +179,8 @@ class VRWKV_SpatialMix(BaseModule):
             ]  # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w),
                                         "b c h w -> b (h w) c") for i in range(self.num_experts)]
-            expert_outputs = [self.expert_norm(expert_outputs[i]) for i in range(self.num_experts)]
+            expert_outputs = [self.expert_norm(expert_outputs[i].transpose(1, 2)).transpose(1, 2)
+                              for i in range(self.num_experts)]
             expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
             if self.key_norm is not None:
                 expert_output = self.key_norm(expert_output)
