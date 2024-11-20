@@ -87,7 +87,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.with_cp = with_cp
 
     def _init_weights(self, init_mode):
-        multi_dim = self.n_embd * self.num_experts
+        multi_dim = self.n_embd
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
@@ -171,14 +171,15 @@ class VRWKV_SpatialMix(BaseModule):
                 [scan_func[i](v) for i in range(self.num_experts)], dim=2
             )  # b (h w) (c e)
 
-            expert_output = RUN_CUDA(B, T, C * self.num_experts,
-                                     self.spatial_decay / T, self.spatial_first / T, ks, vs)
+            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
+            spatial_first = self.spatial_first.repeat(self.num_experts) / T
+            expert_output = RUN_CUDA(B, T, C * self.num_experts, spatial_decay, spatial_first, ks, vs)
             expert_outputs = [
                 expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
                 for i in range(self.num_experts)
             ]  # (b (h w) c) * e
-            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w),
-                                        "b c h w -> b (h w) c") for i in range(self.num_experts)]
+            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
+                              for i in range(self.num_experts)]
             expert_outputs = [self.expert_norm(expert_outputs[i].transpose(1, 2)).transpose(1, 2)
                               for i in range(self.num_experts)]
             expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
