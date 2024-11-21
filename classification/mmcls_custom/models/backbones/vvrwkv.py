@@ -13,7 +13,7 @@ from mmcls.models.utils import resize_pos_embed
 from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw
+from mmcls_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
 from mmcls_custom.models.backbones.wkv import RUN_CUDA
 from mmcls_custom.models.utils import DropPath
 
@@ -57,7 +57,6 @@ class VRWKV_SpatialMix(BaseModule):
         # self.merge_mode = merge_mode
         # h, w = merge_size
         # self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
-        self.expert_norm = nn.InstanceNorm1d(self.attn_sz)
 
         # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
@@ -162,7 +161,7 @@ class VRWKV_SpatialMix(BaseModule):
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
             scan_func = [s_hw, s_wh, s_rhw, s_wrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_rhw]
+            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
 
             ks = torch.cat(
                 [scan_func[i](k) for i in range(self.num_experts)], dim=2
@@ -179,8 +178,6 @@ class VRWKV_SpatialMix(BaseModule):
                 for i in range(self.num_experts)
             ]  # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
-                              for i in range(self.num_experts)]
-            expert_outputs = [self.expert_norm(expert_outputs[i].transpose(1, 2)).transpose(1, 2)
                               for i in range(self.num_experts)]
             expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
             if self.key_norm is not None:
