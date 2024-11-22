@@ -14,7 +14,7 @@ from mmcv.runner.base_module import BaseModule, ModuleList
 from mmseg.models import BACKBONES
 from mmseg.utils import get_root_logger
 
-from mmseg_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw
+from mmseg_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
 from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
@@ -58,7 +58,6 @@ class VRWKV_SpatialMix(BaseModule):
         # self.merge_mode = merge_mode
         # h, w = merge_size
         # self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
-        self.expert_norm = nn.InstanceNorm1d(self.attn_sz)
 
         # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
@@ -88,7 +87,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.with_cp = with_cp
 
     def _init_weights(self, init_mode):
-        multi_dim = self.n_embd * self.num_experts
+        multi_dim = self.n_embd
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
@@ -163,7 +162,7 @@ class VRWKV_SpatialMix(BaseModule):
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
             scan_func = [s_hw, s_wh, s_rhw, s_wrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_rhw]
+            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
 
             ks = torch.cat(
                 [scan_func[i](k) for i in range(self.num_experts)], dim=2
@@ -172,15 +171,14 @@ class VRWKV_SpatialMix(BaseModule):
                 [scan_func[i](v) for i in range(self.num_experts)], dim=2
             )  # b (h w) (c e)
 
-            expert_output = RUN_CUDA(B, T, C * self.num_experts,
-                                     self.spatial_decay / T, self.spatial_first / T, ks, vs)
+            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
+            spatial_first = self.spatial_first.repeat(self.num_experts) / T
+            expert_output = RUN_CUDA(B, T, C * self.num_experts, spatial_decay, spatial_first, ks, vs)
             expert_outputs = [
                 expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
                 for i in range(self.num_experts)
             ]  # (b (h w) c) * e
-            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w),
-                                        "b c h w -> b (h w) c") for i in range(self.num_experts)]
-            expert_outputs = [self.expert_norm(expert_outputs[i].transpose(1, 2)).transpose(1, 2)
+            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
                               for i in range(self.num_experts)]
             expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
             if self.key_norm is not None:
