@@ -159,7 +159,7 @@ class VRWKV_SpatialMix(BaseModule):
             spatial_decay = self.spatial_decay.repeat(w) / h
             spatial_first = self.spatial_first.repeat(w) / h
 
-            v = RUN_CUDA(B, T, C * w, spatial_decay, spatial_first, k, v)
+            v = RUN_CUDA(B, h, w * C, spatial_decay, spatial_first, k, v)
 
             k = rearrange(k, "b h (w c) -> b w (h c)", w=w, c=C)
             v = rearrange(v, "b h (w c) -> b w (h c)", w=w, c=C)
@@ -167,7 +167,9 @@ class VRWKV_SpatialMix(BaseModule):
             spatial_decay = self.spatial_decay.repeat(h) / w
             spatial_first = self.spatial_first.repeat(h) / w
 
-            wkv = RUN_CUDA(B, T, C * h, spatial_decay, spatial_first, k, v)
+            wkv = RUN_CUDA(B, w, h * C, spatial_decay, spatial_first, k, v)
+
+            wkv = rearrange(wkv, "b w (h c) -> b (h w) c", h=h, c=C)
 
             if self.key_norm is not None:
                 wkv = self.key_norm(wkv)
