@@ -52,7 +52,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.shift_mode = shift_mode
 
         # MoE System
-        self.num_experts = 4
+        # self.num_experts = 4
         # self.merge_size = merge_size
         # self.merge_mode = merge_mode
         # h, w = merge_size
@@ -151,38 +151,27 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
-            # score = F.softmax(
-            #     self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            # )  # b e h w
-            # score = score.unsqueeze(1)  # b 1 e h w
             sr, k, v = self.jit_func(x, patch_resolution)
 
-            k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
-            v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
+            k = rearrange(k, "b (h w) c -> b h (w c)", h=h, w=w)
+            v = rearrange(v, "b (h w) c -> b h (w c)", h=h, w=w)
 
-            scan_func = [s_hw, s_wh, s_rhw, s_wrh]
-            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
+            spatial_decay = self.spatial_decay.repeat(w) / h
+            spatial_first = self.spatial_first.repeat(w) / h
 
-            ks = torch.cat(
-                [scan_func[i](k) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
-            vs = torch.cat(
-                [scan_func[i](v) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
+            v = RUN_CUDA(B, T, C * w, spatial_decay, spatial_first, k, v)
 
-            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
-            spatial_first = self.spatial_first.repeat(self.num_experts) / T
-            expert_output = RUN_CUDA(B, T, C * self.num_experts, spatial_decay, spatial_first, ks, vs)
-            expert_outputs = [
-                expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
-                for i in range(self.num_experts)
-            ]  # (b (h w) c) * e
-            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
-                              for i in range(self.num_experts)]
-            expert_output = torch.stack(expert_outputs, dim=0).mean(dim=0)  # b (h w) c
+            k = rearrange(k, "b h (w c) -> b w (h c)", w=w, c=C)
+            v = rearrange(v, "b h (w c) -> b w (h c)", w=w, c=C)
+
+            spatial_decay = self.spatial_decay.repeat(h) / w
+            spatial_first = self.spatial_first.repeat(h) / w
+
+            wkv = RUN_CUDA(B, T, C * h, spatial_decay, spatial_first, k, v)
+
             if self.key_norm is not None:
-                expert_output = self.key_norm(expert_output)
-            x = expert_output * sr
+                wkv = self.key_norm(wkv)
+            x = wkv * sr
             x = self.output(x)
             return x
 
