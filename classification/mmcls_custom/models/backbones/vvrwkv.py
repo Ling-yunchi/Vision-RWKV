@@ -6,6 +6,7 @@ from typing import Sequence
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
+import torch.nn.functional as F
 from einops import rearrange
 from mmcls.models.backbones.base_backbone import BaseBackbone
 from mmcls.models.builder import BACKBONES
@@ -51,14 +52,8 @@ class VRWKV_SpatialMix(BaseModule):
         self.shift_pixel = shift_pixel
         self.shift_mode = shift_mode
 
-        # MoE System
-        # self.num_experts = 4
-        # self.merge_size = merge_size
-        # self.merge_mode = merge_mode
-        # h, w = merge_size
-        # self.merge_weight = nn.Parameter(torch.ones(self.num_experts, h, w) / self.num_experts)  # e, h', w'
-
-        # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
+        self.num_experts = 4
+        self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self._init_weights(init_mode)
 
@@ -151,28 +146,45 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
+            score = F.softmax(
+                self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
+            )  # b e h w
+            score = score.unsqueeze(1)  # b 1 e h w
+
             sr, k, v = self.jit_func(x, patch_resolution)
 
-            k = rearrange(k, "b (h w) c -> (b w) h c", h=h, w=w)
-            v = rearrange(v, "b (h w) c -> (b w) h c", h=h, w=w)
+            k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
+            v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
-            spatial_decay = self.spatial_decay / h
-            spatial_first = self.spatial_first / h
+            scan_func = [s_hw, s_wh, s_rhw, s_wrh]
+            re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
 
-            v = RUN_CUDA(B * w, h, C, spatial_decay, spatial_first, k, v)
+            ks = torch.cat(
+                [scan_func[i](k) for i in range(self.num_experts)], dim=2
+            )  # b (h w) (c e)
+            vs = torch.cat(
+                [scan_func[i](v) for i in range(self.num_experts)], dim=2
+            )  # b (h w) (c e)
 
-            k = rearrange(k, "(b w) h c -> (b h) w c", b=B, w=w)
-            v = rearrange(v, "(b w) h c -> (b h) w c", b=B, w=w)
+            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
+            spatial_first = self.spatial_first.repeat(self.num_experts) / T
 
-            spatial_decay = self.spatial_decay / w
-            spatial_first = self.spatial_first / w
-
-            wkv = RUN_CUDA(B * h, w, C, spatial_decay, spatial_first, k, v)
-
-            wkv = rearrange(wkv, "(b h) w c -> b (h w) c", b=B, h=h)
+            expert_output = RUN_CUDA(B, T, C * self.num_experts, spatial_decay, spatial_first, ks, vs)
+            expert_outputs = [
+                expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
+                for i in range(self.num_experts)
+            ]  # (b (h w) c) * e
+            expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
+                              for i in range(self.num_experts)]
 
             if self.key_norm is not None:
-                wkv = self.key_norm(wkv)
+                expert_outputs = [self.key_norm(eo) for eo in expert_outputs]
+
+            expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
+            expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
+                                       h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
+            prediction = torch.sum(expert_outputs * score, dim=2)
+            wkv = rearrange(prediction, "b c h w -> b (h w) c")
             x = wkv * sr
             x = self.output(x)
             return x
