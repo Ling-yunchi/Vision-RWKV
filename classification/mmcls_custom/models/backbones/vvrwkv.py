@@ -67,7 +67,7 @@ class VRWKV_SpatialMix(BaseModule):
 
         self.key = nn.Linear(n_embd, self.attn_sz, bias=False)
         self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.receptance = nn.Linear(n_embd, self.attn_sz, bias=False)
+        self.receptance = nn.Linear(n_embd, self.attn_sz * self.num_experts, bias=False)
         if key_norm:
             self.key_norm = nn.LayerNorm(self.attn_sz)
         else:
@@ -181,11 +181,12 @@ class VRWKV_SpatialMix(BaseModule):
                 expert_outputs = [self.key_norm(eo) for eo in expert_outputs]
 
             expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
+            expert_outputs = expert_outputs * sr
             expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
                                        h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
             prediction = torch.sum(expert_outputs * score, dim=2)
-            wkv = rearrange(prediction, "b c h w -> b (h w) c")
-            x = wkv * sr
+
+            x = rearrange(prediction, "b c h w -> b (h w) c")
             x = self.output(x)
             return x
 
