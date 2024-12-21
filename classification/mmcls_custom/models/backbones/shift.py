@@ -10,6 +10,7 @@ class UWShift(nn.Module):
         assert kernel_size % 2 == 1, "Kernel size must be odd."
         self.w = nn.Parameter(torch.ones(n_features) / 2)
         self.u = nn.Parameter(torch.ones(n_features) / 2)
+        self.alpha = nn.Parameter(torch.ones(n_features) / 2)
         self.kernel_size = kernel_size
         self.padding = tuple(k // 2 for k in [self.kernel_size, self.kernel_size])
         with torch.no_grad():
@@ -42,15 +43,17 @@ class UWShift(nn.Module):
         """
         B, T, C = x.shape
         H, W = patch_resolution
-        x = rearrange(x, "b (h w) c -> b c h w", h=H, w=W)
+        xx = rearrange(x, "b (h w) c -> b c h w", h=H, w=W)
 
         decay_mat = self.calc_decay_matrix()
         decay_mat = rearrange(decay_mat, 'c k1 k2 -> c () k1 k2')
 
-        output = F.conv2d(x, decay_mat, padding=self.padding, groups=C)
+        xx = F.conv2d(xx, decay_mat, padding=self.padding, groups=C)
 
-        output = rearrange(output, 'b c h w -> b (h w) c')
+        xx = rearrange(xx, 'b c h w -> b (h w) c')
+        output = x * self.alpha + xx * (1 - self.alpha)
         return output
+
 
 if __name__ == "__main__":
     x = torch.ones(2, 9, 1)
