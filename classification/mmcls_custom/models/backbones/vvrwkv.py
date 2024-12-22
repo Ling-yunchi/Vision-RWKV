@@ -22,24 +22,6 @@ from mmcls_custom.models.utils import DropPath
 logger = logging.getLogger(__name__)
 
 
-def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
-    assert gamma <= 1 / 4
-    B, N, C = input.shape
-    input = input.transpose(1, 2).reshape(B, C, patch_resolution[0], patch_resolution[1])
-    B, C, H, W = input.shape
-    output = torch.zeros_like(input)
-    output[:, 0:int(C * gamma), :, shift_pixel:W] = input[:, 0:int(C * gamma), :, 0:W - shift_pixel]
-    output[:, int(C * gamma):int(C * gamma * 2), :, 0:W - shift_pixel] = input[:, int(C * gamma):int(C * gamma * 2), :,
-                                                                         shift_pixel:W]
-    output[:, int(C * gamma * 2):int(C * gamma * 3), shift_pixel:H, :] = input[:, int(C * gamma * 2):int(C * gamma * 3),
-                                                                         0:H - shift_pixel, :]
-    output[:, int(C * gamma * 3):int(C * gamma * 4), 0:H - shift_pixel, :] = input[:,
-                                                                             int(C * gamma * 3):int(C * gamma * 4),
-                                                                             shift_pixel:H, :]
-    output[:, int(C * gamma * 4):, ...] = input[:, int(C * gamma * 4):, ...]
-    return output.flatten(2).transpose(1, 2)
-
-
 class VRWKV_SpatialMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift', init_mode='fancy',
                  key_norm=False, with_cp=False):
