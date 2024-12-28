@@ -152,6 +152,32 @@ class VRWKV_SpatialMix(BaseModule):
         return x
 
 
+class SeparableAttention(nn.Module):
+    def __init__(self, embed_dim, hidden_dim, attn_dropout=0.0):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.qkv_proj = nn.Conv2d(embed_dim, 1 + (hidden_dim * 2), 1)
+        self.attn_drop = nn.Dropout(attn_dropout)
+        self.out_proj = nn.Conv2d(hidden_dim, embed_dim, 1)
+
+    def forward(self, x):
+        """
+        x: B H W C
+        """
+        qkv = self.qkv_proj(x)
+        query, key, value = torch.split(qkv, [1, self.hidden_dim, self.hidden_dim], dim=1)
+
+        context_scores = F.softmax(query, dim=-1)
+        context_scores = self.attn_drop(context_scores)  # B H W 1
+
+        context_vector = key * context_scores  # B H W D
+        context_vector = torch.sum(context_vector, dim=-1, keepdim=True)  # B H W 1
+
+        output = F.relu(value) * context_vector  # B H W D
+        output = self.out_proj(output)
+        return output
+
+
 class ChannelAttention(nn.Module):
     """Channel attention
     Args:
@@ -187,17 +213,19 @@ class VRWKV_ChannelMix(BaseModule):
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
         self.omni_shift = OmniShift(dim=n_embd)
 
-        hidden_sz = hidden_rate * n_embd
-        self.key = nn.Linear(n_embd, hidden_sz, bias=False)
-        if key_norm:
-            self.key_norm = nn.LayerNorm(hidden_sz)
-        else:
-            self.key_norm = None
-        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
-        self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+        self.channel_attn = ChannelAttention(n_embd)
 
-        self.value.scale_init = 0
-        self.receptance.scale_init = 0
+        # hidden_sz = hidden_rate * n_embd
+        # self.key = nn.Linear(n_embd, hidden_sz, bias=False)
+        # if key_norm:
+        #     self.key_norm = nn.LayerNorm(hidden_sz)
+        # else:
+        #     self.key_norm = None
+        # self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        # self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+        #
+        # self.value.scale_init = 0
+        # self.receptance.scale_init = 0
 
     def _init_weights(self, init_mode):
         pass
@@ -208,14 +236,15 @@ class VRWKV_ChannelMix(BaseModule):
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.omni_shift(x)
-            x = rearrange(x, "b c h w -> b (h w) c")
 
-            k = self.key(x)
-            k = torch.square(torch.relu(k))
-            if self.key_norm is not None:
-                k = self.key_norm(k)
-            kv = self.value(k)
-            x = torch.sigmoid(self.receptance(x)) * kv
+            # k = self.key(x)
+            # k = torch.square(torch.relu(k))
+            # if self.key_norm is not None:
+            #     k = self.key_norm(k)
+            # kv = self.value(k)
+            # x = torch.sigmoid(self.receptance(x)) * kv
+            x = self.channel_attn(x)
+            x = rearrange(x, "b c h w -> b (h w) c")
             return x
 
         if self.with_cp and x.requires_grad:
@@ -382,6 +411,10 @@ class VVRWKV(BaseBackbone):
 
 
 if __name__ == "__main__":
+    # separate_attn = SeparableAttention(embed_dim=4, hidden_dim=256)
+    # x = torch.randn(1, 4, 4, 4)
+    # out = separate_attn(x)
+    # print(out.shape)
     model = VVRWKV(
         img_size=224,
         patch_size=16,
