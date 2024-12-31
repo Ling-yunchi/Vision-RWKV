@@ -200,6 +200,31 @@ class ChannelAttention(nn.Module):
         return x * y
 
 
+class ECA(nn.Module):
+    """Constructs a ECA module.
+
+    Args:
+        channel: Number of channels of the input feature map
+        k_size: Adaptive selection of kernel size
+    """
+
+    def __init__(self, channel, k_size=None):
+        super(ECA, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        if k_size is None:
+            t = int(abs((math.log(channel, 2) + 1) / 2))
+            k_size = k_size if t % 2 else t + 1
+        self.k_size = k_size
+        self.conv = nn.Conv1d(1, 1, kernel_size=self.k_size, padding=(k_size - 1) // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        y = self.avg_pool(x)
+        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
+        y = self.sigmoid(y)
+        return x * y.expand_as(x)
+
+
 class VRWKV_ChannelMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, hidden_rate=4, init_mode='fancy',
                  key_norm=False, with_cp=False):
@@ -213,7 +238,7 @@ class VRWKV_ChannelMix(BaseModule):
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
         self.omni_shift = OmniShift(dim=n_embd)
 
-        self.channel_attn = ChannelAttention(n_embd)
+        self.channel_attn = ECA(n_embd)
 
         # hidden_sz = hidden_rate * n_embd
         # self.key = nn.Linear(n_embd, hidden_sz, bias=False)
@@ -304,7 +329,7 @@ class Block(BaseModule):
         return x
 
 
-@BACKBONES.register_module()
+# @BACKBONES.register_module()
 class VVRWKV(BaseBackbone):
     def __init__(self,
                  img_size=224,
