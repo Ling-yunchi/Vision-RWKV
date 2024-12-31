@@ -329,7 +329,7 @@ class Block(BaseModule):
         return x
 
 
-# @BACKBONES.register_module()
+@BACKBONES.register_module()
 class VVRWKV(BaseBackbone):
     def __init__(self,
                  img_size=224,
