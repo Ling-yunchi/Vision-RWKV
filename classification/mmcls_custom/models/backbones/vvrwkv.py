@@ -240,17 +240,17 @@ class VRWKV_ChannelMix(BaseModule):
 
         self.channel_attn = ECA(n_embd)
 
-        # hidden_sz = hidden_rate * n_embd
-        # self.key = nn.Linear(n_embd, hidden_sz, bias=False)
-        # if key_norm:
-        #     self.key_norm = nn.LayerNorm(hidden_sz)
-        # else:
-        #     self.key_norm = None
-        # self.receptance = nn.Linear(n_embd, n_embd, bias=False)
-        # self.value = nn.Linear(hidden_sz, n_embd, bias=False)
-        #
-        # self.value.scale_init = 0
-        # self.receptance.scale_init = 0
+        hidden_sz = hidden_rate * n_embd
+        self.key = nn.Linear(n_embd, hidden_sz, bias=False)
+        if key_norm:
+            self.key_norm = nn.LayerNorm(hidden_sz)
+        else:
+            self.key_norm = None
+        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+
+        self.value.scale_init = 0
+        self.receptance.scale_init = 0
 
     def _init_weights(self, init_mode):
         pass
@@ -261,13 +261,16 @@ class VRWKV_ChannelMix(BaseModule):
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.omni_shift(x)
+            x = rearrange(x, "b c h w -> b (h w) c")
 
-            # k = self.key(x)
-            # k = torch.square(torch.relu(k))
-            # if self.key_norm is not None:
-            #     k = self.key_norm(k)
-            # kv = self.value(k)
-            # x = torch.sigmoid(self.receptance(x)) * kv
+            k = self.key(x)
+            k = torch.square(torch.relu(k))
+            if self.key_norm is not None:
+                k = self.key_norm(k)
+            kv = self.value(k)
+            x = torch.sigmoid(self.receptance(x)) * kv
+
+            x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.channel_attn(x)
             x = rearrange(x, "b c h w -> b (h w) c")
             return x
