@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class VRWKV_SpatialMix(BaseModule):
-    def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift', init_mode='fancy',
-                 key_norm=False, with_cp=False):
+    def __init__(self, n_embd, n_layer, layer_id, init_mode='fancy', key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.n_layer = n_layer
@@ -153,6 +152,57 @@ class VRWKV_SpatialMix(BaseModule):
         return x
 
 
+class SeparableAttention(nn.Module):
+    def __init__(self, embed_dim, hidden_dim, attn_dropout=0.0):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.qkv_proj = nn.Conv2d(embed_dim, 1 + (hidden_dim * 2), 1)
+        self.attn_drop = nn.Dropout(attn_dropout)
+        self.out_proj = nn.Conv2d(hidden_dim, embed_dim, 1)
+
+    def forward(self, x):
+        """
+        x: B H W C
+        """
+        qkv = self.qkv_proj(x)
+        query, key, value = torch.split(qkv, [1, self.hidden_dim, self.hidden_dim], dim=1)
+
+        context_scores = F.softmax(query, dim=-1)
+        context_scores = self.attn_drop(context_scores)  # B H W 1
+
+        context_vector = key * context_scores  # B H W D
+        context_vector = torch.sum(context_vector, dim=-1, keepdim=True)  # B H W 1
+
+        output = F.relu(value) * context_vector  # B H W D
+        output = self.out_proj(output)
+        return output
+
+
+class ECA(nn.Module):
+    """Constructs a ECA module.
+
+    Args:
+        channel: Number of channels of the input feature map
+        k_size: Adaptive selection of kernel size
+    """
+
+    def __init__(self, channel, k_size=None):
+        super(ECA, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        if k_size is None:
+            t = int(abs((math.log(channel, 2) + 1) / 2))
+            k_size = k_size if t % 2 else t + 1
+        self.k_size = k_size
+        self.conv = nn.Conv1d(1, 1, kernel_size=self.k_size, padding=(k_size - 1) // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        y = self.avg_pool(x)
+        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
+        y = self.sigmoid(y)
+        return x * y.expand_as(x)
+
+
 class VRWKV_ChannelMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, hidden_rate=4, init_mode='fancy',
                  key_norm=False, with_cp=False):
@@ -165,6 +215,8 @@ class VRWKV_ChannelMix(BaseModule):
 
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
         self.omni_shift = OmniShift(dim=n_embd)
+
+        self.channel_attn = ECA(n_embd)
 
         hidden_sz = hidden_rate * n_embd
         self.key = nn.Linear(n_embd, hidden_sz, bias=False)
@@ -195,6 +247,10 @@ class VRWKV_ChannelMix(BaseModule):
                 k = self.key_norm(k)
             kv = self.value(k)
             x = torch.sigmoid(self.receptance(x)) * kv
+
+            x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+            x = self.channel_attn(x)
+            x = rearrange(x, "b c h w -> b (h w) c")
             return x
 
         if self.with_cp and x.requires_grad:
@@ -215,11 +271,10 @@ class Block(BaseModule):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, init_mode,
-                                    key_norm=key_norm, with_cp=with_cp)
+        self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, init_mode, key_norm=key_norm, with_cp=with_cp)
 
-        self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, hidden_rate,
-                                    init_mode, key_norm=key_norm, with_cp=with_cp)
+        self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, hidden_rate, init_mode, key_norm=key_norm,
+                                    with_cp=with_cp)
         self.layer_scale = (init_values is not None)
         self.post_norm = post_norm
         if self.layer_scale:

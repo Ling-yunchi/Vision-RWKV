@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class VRWKV_SpatialMix(BaseModule):
-    def __init__(self, n_embd, n_layer, layer_id, shift_mode='q_shift', init_mode='fancy',
-                 key_norm=False, with_cp=False):
+    def __init__(self, n_embd, n_layer, layer_id, init_mode='fancy', key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
         self.n_layer = n_layer
@@ -178,28 +177,6 @@ class SeparableAttention(nn.Module):
         return output
 
 
-class ChannelAttention(nn.Module):
-    """Channel attention
-    Args:
-        num_feat (int): Channel number of intermediate features.
-        squeeze_factor (int): Channel squeeze factor. Default: 16.
-    """
-
-    def __init__(self, num_feat, squeeze_factor=16):
-        super(ChannelAttention, self).__init__()
-        self.attention = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(num_feat, num_feat // squeeze_factor, 1, padding=0),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(num_feat // squeeze_factor, num_feat, 1, padding=0),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        y = self.attention(x)
-        return x * y
-
-
 class ECA(nn.Module):
     """Constructs a ECA module.
 
@@ -293,11 +270,10 @@ class Block(BaseModule):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, init_mode,
-                                    key_norm=key_norm, with_cp=with_cp)
+        self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, init_mode, key_norm=key_norm, with_cp=with_cp)
 
-        self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, hidden_rate,
-                                    init_mode, key_norm=key_norm, with_cp=with_cp)
+        self.ffn = VRWKV_ChannelMix(n_embd, n_layer, layer_id, hidden_rate, init_mode, key_norm=key_norm,
+                                    with_cp=with_cp)
         self.layer_scale = (init_values is not None)
         self.post_norm = post_norm
         if self.layer_scale:
