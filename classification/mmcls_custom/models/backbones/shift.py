@@ -2,10 +2,11 @@ import torch
 from einops import rearrange
 from torch import nn
 import torch.nn.functional as F
+from torchvision.ops import DeformConv2d
 
 
 class UWShift(nn.Module):
-    def __init__(self, n_features, kernel_size):
+    def __init__(self, n_features, kernel_size=7):
         super().__init__()
         assert kernel_size % 2 == 1, "Kernel size must be odd."
         self.w = nn.Parameter(torch.ones(n_features) / 2)
@@ -132,7 +133,138 @@ class OmniShift(nn.Module):
         return out
 
 
+class MLDCShift(nn.Module):
+    def __init__(self, dim):
+        super(MLDCShift, self).__init__()
+        self.conv1x1_in = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
+        self.conv3x3_1 = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=2,
+            dilation=2,
+            groups=dim,
+            bias=False,
+        )
+        self.conv3x3_2 = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=3,
+            dilation=3,
+            groups=dim,
+            bias=False,
+        )
+        self.conv1x1_out = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
+
+    def forward(self, x):
+        xx = self.conv1x1_in(x)
+        x1 = self.conv3x3_1(xx)
+        x2 = self.conv3x3_2(xx)
+        xx = self.conv1x1_out(x1 + x2)
+        out = x + xx
+        return out
+
+
+class MVCShift(nn.Module):
+    def __init__(self, dim):
+        super(MVCShift, self).__init__()
+        self.conv1x1 = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
+        self.conv3x3d1 = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=1,
+            groups=dim,
+            bias=False,
+        )
+        self.conv3x3d2 = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=2,
+            dilation=2,
+            groups=dim,
+            bias=False,
+        )
+        self.conv3x3d3 = nn.Conv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=3,
+            padding=3,
+            dilation=3,
+            groups=dim,
+            bias=False,
+        )
+        self.alpha = nn.Parameter(torch.ones(5) / 5)
+        self.register_buffer('combined_weight', None)
+
+    def forward(self, x):
+        out1x1 = self.conv1x1(x)
+        out3x3d1 = self.conv3x3d1(x)
+        out3x3d2 = self.conv3x3d2(x)
+        out3x3d3 = self.conv3x3d3(x)
+        out = (
+                self.alpha[0] * out1x1
+                + self.alpha[1] * out3x3d1
+                + self.alpha[2] * out3x3d2
+                + self.alpha[3] * out3x3d3
+        )
+        return out
+
+
+class DeformShift(nn.Module):
+    def __init__(self, dim, kernel_size=3, offset_ks=3):
+        super(DeformShift, self).__init__()
+        o_p = offset_ks // 2
+        padding = kernel_size // 2
+        self.offset_conv = nn.Conv2d(
+            dim,
+            2 * kernel_size * kernel_size,
+            kernel_size=offset_ks,
+            stride=1,
+            padding=o_p,
+            bias=True
+        )
+        self.deform_conv = DeformConv2d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=padding,
+            groups=dim,  # 使用depth-wise convolution
+            bias=False
+        )
+
+    def forward(self, x):
+        offset = self.offset_conv(x)
+        out = self.deform_conv(x, offset)
+        return out
+
+
 if __name__ == "__main__":
-    x = torch.ones(2, 9, 1)
-    shift = UWShift(1, 3)
-    print(shift(x, (3, 3)))
+    dim = 192
+    x = torch.ones(2, dim, 3, 3)
+    omni_shift = OmniShift(dim)
+    uw_shift = UWShift(dim)
+    mldc_shift = MLDCShift(dim)
+    mvc_shift = MVCShift(dim)
+    deform_shift = DeformShift(dim)
+
+
+    # print all shift total params
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+    print(f'OmniShift: {count_parameters(omni_shift)}')
+    print(f'UWShift: {count_parameters(uw_shift)}')
+    print(f'MLDCShift: {count_parameters(mldc_shift)}')
+    print(f'MVCShift: {count_parameters(mvc_shift)}')
+    print(f'DeformShift: {count_parameters(deform_shift)}')
