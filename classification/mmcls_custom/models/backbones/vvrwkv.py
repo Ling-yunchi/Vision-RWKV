@@ -16,7 +16,7 @@ from mmcv.runner.base_module import BaseModule, ModuleList
 
 from mmcls_custom.models.backbones.channel_attn import ECA
 from mmcls_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
-from mmcls_custom.models.backbones.shift import UWShift, OmniShift
+from mmcls_custom.models.backbones.shift import UWShift, OmniShift, MLDCShift
 from mmcls_custom.models.backbones.wkv import RUN_CUDA
 from mmcls_custom.models.utils import DropPath
 
@@ -33,7 +33,8 @@ class VRWKV_SpatialMix(BaseModule):
         self.attn_sz = n_embd
 
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        # self.omni_shift = OmniShift(dim=n_embd)
+        self.mldc_shift = MLDCShift(dim=n_embd)
 
         self.num_experts = 4
         self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
@@ -84,7 +85,8 @@ class VRWKV_SpatialMix(BaseModule):
         # x = self.uw_shift(x, patch_resolution)
         h, w = patch_resolution
         x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-        x = self.omni_shift(x)
+        # x = self.omni_shift(x)
+        x = self.mldc_shift(x)
         x = rearrange(x, "b c h w -> b (h w) c")
 
         # Use xk, xv, xr to produce k, v, r
@@ -163,7 +165,8 @@ class VRWKV_ChannelMix(BaseModule):
         self._init_weights(init_mode)
 
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        # self.omni_shift = OmniShift(dim=n_embd)
+        self.mldc_shift = MLDCShift(n_embd)
 
         self.channel_attn = ECA(n_embd)
 
@@ -187,7 +190,8 @@ class VRWKV_ChannelMix(BaseModule):
             # x = self.uw_shift(x, patch_resolution)
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-            x = self.omni_shift(x)
+            # x = self.omni_shift(x)
+            x = self.mldc_shift(x)
             x = rearrange(x, "b c h w -> b (h w) c")
 
             k = self.key(x)
