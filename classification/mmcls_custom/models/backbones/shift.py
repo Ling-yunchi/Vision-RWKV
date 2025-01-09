@@ -203,7 +203,6 @@ class MVCShift(nn.Module):
             bias=False,
         )
         self.alpha = nn.Parameter(torch.ones(5) / 5)
-        self.register_buffer('combined_weight', None)
 
     def forward(self, x):
         out1x1 = self.conv1x1(x)
