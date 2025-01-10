@@ -170,9 +170,9 @@ class MLDCShift(nn.Module):
         return out
 
 
-class MVCCShift(nn.Module):
+class MVCShift(nn.Module):
     def __init__(self, dim):
-        super(MVCCShift, self).__init__()
+        super(MVCShift, self).__init__()
         self.conv1x1 = nn.Conv2d(
             in_channels=dim, out_channels=dim, kernel_size=1, bias=False
         )
