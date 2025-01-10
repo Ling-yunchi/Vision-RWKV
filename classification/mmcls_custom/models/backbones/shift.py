@@ -170,9 +170,9 @@ class MLDCShift(nn.Module):
         return out
 
 
-class MVCShift(nn.Module):
+class MVCCShift(nn.Module):
     def __init__(self, dim):
-        super(MVCShift, self).__init__()
+        super(MVCCShift, self).__init__()
         self.conv1x1 = nn.Conv2d(
             in_channels=dim, out_channels=dim, kernel_size=1, bias=False
         )
@@ -202,19 +202,25 @@ class MVCShift(nn.Module):
             groups=dim,
             bias=False,
         )
-        self.alpha = nn.Parameter(torch.ones(5) / 5)
+        self.conv1x1_1 = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
+        self.conv1x1_2 = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
+        self.conv1x1_3 = nn.Conv2d(
+            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+        )
 
     def forward(self, x):
-        out1x1 = self.conv1x1(x)
-        out3x3d1 = self.conv3x3d1(x)
-        out3x3d2 = self.conv3x3d2(x)
-        out3x3d3 = self.conv3x3d3(x)
-        out = (
-                self.alpha[0] * out1x1
-                + self.alpha[1] * out3x3d1
-                + self.alpha[2] * out3x3d2
-                + self.alpha[3] * out3x3d3
-        )
+        xx = self.conv1x1(x)
+        x1 = self.conv3x3d1(xx)
+        x2 = self.conv3x3d2(xx)
+        x3 = self.conv3x3d3(xx)
+        x1o = self.conv1x1_1(x1)
+        x2o = self.conv1x1_2(x2)
+        x3o = self.conv1x1_3(x3)
+        out = x + x1o + x2o + x3o
         return out
 
 
