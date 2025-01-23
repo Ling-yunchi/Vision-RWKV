@@ -1,7 +1,10 @@
 _base_ = ['./pipelines/rand_aug.py']
 
 # dataset settings
-dataset_type = 'ImageNet'
+dataset_type = 'CustomDataset'
+classes = ['denseresidential', 'runway', 'parkinglot', 'harbor', 'forest', 'intersection', 'mediumresidential',
+           'buildings', 'storagetanks', 'freeway', 'airplane', 'sparseresidential', 'river', 'tenniscourt',
+           'golfcourse', 'mobilehomepark', 'overpass', 'chaparral', 'baseballdiamond', 'agricultural', 'beach']
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 
@@ -54,18 +57,15 @@ data = dict(
     workers_per_gpu=8,
     train=dict(
         type=dataset_type,
-        data_prefix='data/imagenet/train',
+        data_prefix='data/UCMerced_LandUse/train',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
-        data_prefix='data/imagenet/val',
-        # ann_file='data/imagenet/meta/val.txt',
+        data_prefix='data/UCMerced_LandUse/val',
         pipeline=test_pipeline),
     test=dict(
-        # replace `data/val` with `data/test` for standard test
         type=dataset_type,
-        data_prefix='data/imagenet/val',
-        # ann_file='data/imagenet/meta/val.txt',
+        data_prefix='data/UCMerced_LandUse/val',
         pipeline=test_pipeline))
 
 evaluation = dict(interval=10, metric='accuracy')

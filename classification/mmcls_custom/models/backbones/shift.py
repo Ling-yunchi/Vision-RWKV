@@ -243,7 +243,7 @@ class DeformShift(nn.Module):
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
-            groups=dim,  # 使用depth-wise convolution
+            groups=dim,
             bias=False
         )
 

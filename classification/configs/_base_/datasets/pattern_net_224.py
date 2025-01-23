@@ -1,7 +1,13 @@
 _base_ = ['./pipelines/rand_aug.py']
 
 # dataset settings
-dataset_type = 'ImageNet'
+dataset_type = 'CustomDataset'
+classes = ['swimming_pool', 'parking_lot', 'coastal_mansion', 'runway', 'closed_road', 'golf_course',
+           'wastewater_treatment_plant', 'runway_marking', 'cemetery', 'shipping_yard', 'parking_space', 'harbor',
+           'solar_panel', 'oil_well', 'tennis_court', 'forest', 'intersection', 'storage_tank', 'football_field',
+           'freeway', 'christmas_tree_farm', 'ferry_terminal', 'crosswalk', 'oil_gas_field', 'airplane', 'nursing_home',
+           'river', 'railway', 'dense_residential', 'transformer_station', 'overpass', 'mobile_home_park', 'chaparral',
+           'baseball_field', 'bridge', 'sparse_residential', 'basketball_court', 'beach']
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 
@@ -54,18 +60,15 @@ data = dict(
     workers_per_gpu=8,
     train=dict(
         type=dataset_type,
-        data_prefix='data/imagenet/train',
+        data_prefix='data/pattern-net/train',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
-        data_prefix='data/imagenet/val',
-        # ann_file='data/imagenet/meta/val.txt',
+        data_prefix='data/pattern-net/val',
         pipeline=test_pipeline),
     test=dict(
-        # replace `data/val` with `data/test` for standard test
         type=dataset_type,
-        data_prefix='data/imagenet/val',
-        # ann_file='data/imagenet/meta/val.txt',
+        data_prefix='data/pattern-net/val',
         pipeline=test_pipeline))
 
 evaluation = dict(interval=10, metric='accuracy')

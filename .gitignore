@@ -12,3 +12,5 @@ batchscript-*
 detection/ops/build
 detection/ops/dist
 detection/ops/MultiScaleDeformableAttention.egg-info
+
+**/build/*
