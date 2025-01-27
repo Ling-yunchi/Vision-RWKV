@@ -16,7 +16,7 @@ model = dict(
     neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='LinearClsHead',
-        num_classes=1000,
+        num_classes=21,
         in_channels=192,
         init_cfg=None,  # suppress the default init_cfg of LinearClsHead.
         loss=dict(
