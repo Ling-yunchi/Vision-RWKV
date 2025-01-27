@@ -12,6 +12,7 @@ pretrained = None
 model = dict(
     pretrained=pretrained,
     backbone=dict(
+        _delete_=True,
         type='RSRWKV',
         img_size=224,
         patch_size=16,
