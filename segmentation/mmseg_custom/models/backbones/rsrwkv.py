@@ -273,7 +273,7 @@ class RSRWKV(BaseModule):
                  out_indices=-1,
                  drop_rate=0.,
                  embed_dims=192,
-                 layer_depth=2,
+                 layer_depth=3,
                  drop_path_rate=0.,
                  init_mode='fancy',
                  post_norm=False,
