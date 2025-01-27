@@ -20,7 +20,6 @@ model = dict(
         layer_depth=3,
         drop_path_rate=0.1,
         hidden_rate=2,
-        pretrained=None,
         init_values=1,
         with_cp=False,
     ),
