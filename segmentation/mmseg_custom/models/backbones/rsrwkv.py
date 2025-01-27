@@ -1,23 +1,21 @@
-# Copyright (c) Shanghai AI Lab. All rights reserved.
 import logging
 import math
-import warnings
 from typing import Sequence
 
 import torch
 import torch.nn as nn
-import torch.utils.checkpoint as cp
 import torch.nn.functional as F
+import torch.utils.checkpoint as cp
 from einops import rearrange
 from mmcv.cnn.bricks.transformer import PatchEmbed
-from mmcv.runner import load_checkpoint
-from mmcv.runner.base_module import BaseModule, ModuleList
+from mmcv.runner.base_module import BaseModule
 from mmseg.models import BACKBONES
-from mmseg.utils import get_root_logger
 
+from mmseg_custom.models.backbones.base.down_sample import Down_wt
 from mmseg_custom.models.backbones.base.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
+from mmseg_custom.models.backbones.base.shift import MVCShift
+from mmseg_custom.models.backbones.base.vvrwkv import Block, ECA
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
-from mmseg_custom.models.backbones.base.shift import OmniShift
 from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
 logger = logging.getLogger(__name__)
@@ -33,7 +31,8 @@ class VRWKV_SpatialMix(BaseModule):
         self.attn_sz = n_embd
 
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        # self.omni_shift = OmniShift(dim=n_embd)
+        self.mvc_shift = MVCShift(n_embd)
 
         self.num_experts = 4
         self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
@@ -60,7 +59,6 @@ class VRWKV_SpatialMix(BaseModule):
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
-                ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer))  # 1 to ~0
 
                 # fancy time_decay
                 decay_speed = torch.ones(multi_dim)
@@ -81,10 +79,9 @@ class VRWKV_SpatialMix(BaseModule):
             raise NotImplementedError
 
     def jit_func(self, x, patch_resolution):
-        # x = self.uw_shift(x, patch_resolution)
         h, w = patch_resolution
         x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-        x = self.omni_shift(x)
+        x = self.mvc_shift(x)
         x = rearrange(x, "b c h w -> b (h w) c")
 
         # Use xk, xv, xr to produce k, v, r
@@ -152,57 +149,6 @@ class VRWKV_SpatialMix(BaseModule):
         return x
 
 
-class SeparableAttention(nn.Module):
-    def __init__(self, embed_dim, hidden_dim, attn_dropout=0.0):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.qkv_proj = nn.Conv2d(embed_dim, 1 + (hidden_dim * 2), 1)
-        self.attn_drop = nn.Dropout(attn_dropout)
-        self.out_proj = nn.Conv2d(hidden_dim, embed_dim, 1)
-
-    def forward(self, x):
-        """
-        x: B H W C
-        """
-        qkv = self.qkv_proj(x)
-        query, key, value = torch.split(qkv, [1, self.hidden_dim, self.hidden_dim], dim=1)
-
-        context_scores = F.softmax(query, dim=-1)
-        context_scores = self.attn_drop(context_scores)  # B H W 1
-
-        context_vector = key * context_scores  # B H W D
-        context_vector = torch.sum(context_vector, dim=-1, keepdim=True)  # B H W 1
-
-        output = F.relu(value) * context_vector  # B H W D
-        output = self.out_proj(output)
-        return output
-
-
-class ECA(nn.Module):
-    """Constructs a ECA module.
-
-    Args:
-        channel: Number of channels of the input feature map
-        k_size: Adaptive selection of kernel size
-    """
-
-    def __init__(self, channel, k_size=None):
-        super(ECA, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        if k_size is None:
-            t = int(abs((math.log(channel, 2) + 1) / 2))
-            k_size = k_size if t % 2 else t + 1
-        self.k_size = k_size
-        self.conv = nn.Conv1d(1, 1, kernel_size=self.k_size, padding=(k_size - 1) // 2, bias=False)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        y = self.avg_pool(x)
-        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
-        y = self.sigmoid(y)
-        return x * y.expand_as(x)
-
-
 class VRWKV_ChannelMix(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, hidden_rate=4, init_mode='fancy',
                  key_norm=False, with_cp=False):
@@ -213,8 +159,7 @@ class VRWKV_ChannelMix(BaseModule):
         self.with_cp = with_cp
         self._init_weights(init_mode)
 
-        # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        self.mvc_shift = MVCShift(n_embd)
 
         self.channel_attn = ECA(n_embd)
 
@@ -235,10 +180,9 @@ class VRWKV_ChannelMix(BaseModule):
 
     def forward(self, x, patch_resolution=None):
         def _inner_forward(x):
-            # x = self.uw_shift(x, patch_resolution)
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-            x = self.omni_shift(x)
+            x = self.mvc_shift(x)
             x = rearrange(x, "b c h w -> b (h w) c")
 
             k = self.key(x)
@@ -309,49 +253,57 @@ class Block(BaseModule):
         return x
 
 
+class Layer(BaseModule):
+    def __init__(self, blocks):
+        super().__init__()
+        self.blocks = nn.ModuleList(blocks)
+
+    def forward(self, x, patch_resolution=None):
+        for block in self.blocks:
+            x = block(x, patch_resolution)
+        return x
+
+
 @BACKBONES.register_module()
-class VVRWKV(BaseModule):
+class RSRWKV(BaseModule):
     def __init__(self,
                  img_size=224,
                  patch_size=16,
                  in_channels=3,
                  out_indices=-1,
                  drop_rate=0.,
-                 embed_dims=256,
-                 depth=12,
+                 embed_dims=192,
+                 layer_depth=2,
                  drop_path_rate=0.,
                  init_mode='fancy',
                  post_norm=False,
                  key_norm=False,
                  init_values=None,
-                 hidden_rate=4,
+                 hidden_rate=2,
                  final_norm=True,
                  interpolate_mode='bicubic',
-                 pretrained=None,
                  with_cp=False,
                  init_cfg=None):
-        assert not (init_cfg and pretrained), \
-            'init_cfg and pretrained cannot be specified at the same time'
-        if isinstance(pretrained, str):
-            warnings.warn('DeprecationWarning: pretrained is deprecated, '
-                          'please use "init_cfg" instead')
-            self.init_cfg = dict(type='Pretrained', checkpoint=pretrained)
-        elif pretrained is None:
-            self.init_cfg = init_cfg
-        else:
-            raise TypeError('pretrained must be a str or None')
-        super().__init__(self.init_cfg)
-        self.embed_dims = embed_dims
+        super().__init__(init_cfg)
         self.num_extra_tokens = 0
-        self.num_layers = depth
+        self.num_layers = 4
+        self.layer_depth = layer_depth
         self.drop_path_rate = drop_path_rate
-        logger = get_root_logger()
-        logger.info(f'layer_scale: {init_values is not None}')
+
+        if isinstance(embed_dims, int):
+            embed_dims = [embed_dims] * self.num_layers
+        assert isinstance(embed_dims, Sequence), \
+            f'"embed_dims" must by a sequence or int, ' \
+            f'get {type(embed_dims)} instead.'
+        assert len(embed_dims) == self.num_layers, \
+            f'"embed_dims" must have {self.num_layers} elements, ' \
+            f'get {len(embed_dims)} instead.'
+        self.embed_dims = embed_dims
 
         self.patch_embed = PatchEmbed(
             in_channels=in_channels,
             input_size=img_size,
-            embed_dims=self.embed_dims,
+            embed_dims=self.embed_dims[0],
             conv_type='Conv2d',
             kernel_size=patch_size,
             stride=patch_size,
@@ -362,8 +314,7 @@ class VVRWKV(BaseModule):
 
         # Set position embedding
         self.interpolate_mode = interpolate_mode
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, num_patches, self.embed_dims))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, self.embed_dims[0]))
 
         self.drop_after_pos = nn.Dropout(p=drop_rate)
 
@@ -378,42 +329,36 @@ class VVRWKV(BaseModule):
             assert 0 <= out_indices[i] <= self.num_layers, \
                 f'Invalid out_indices {index}'
         self.out_indices = out_indices
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
-        self.layers = ModuleList()
+
+        all_layers = self.num_layers * self.layer_depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, all_layers)]
+
+        self.layers = nn.ModuleList()
         for i in range(self.num_layers):
-            self.layers.append(Block(
-                n_embd=embed_dims,
-                n_layer=depth,
-                layer_id=i,
-                hidden_rate=hidden_rate,
-                drop_path=dpr[i],
-                init_mode=init_mode,
-                post_norm=post_norm,
-                key_norm=key_norm,
-                init_values=init_values,
-                with_cp=with_cp
-            ))
+            blocks = []
+            for j in range(self.layer_depth):
+                idx = i * self.layer_depth + j
+                blocks.append(Block(
+                    n_embd=embed_dims[i],
+                    n_layer=all_layers,
+                    layer_id=idx,
+                    hidden_rate=hidden_rate,
+                    drop_path=dpr[idx],
+                    init_mode=init_mode,
+                    post_norm=post_norm,
+                    key_norm=key_norm,
+                    init_values=init_values,
+                    with_cp=with_cp
+                ))
+            self.layers.append(Layer(blocks))
+
+        self.down_samples = nn.ModuleList()
+        for i in range(self.num_layers - 1):
+            self.down_samples.append(Down_wt(self.embed_dims[i], self.embed_dims[i + 1]))
 
         self.final_norm = final_norm
         if final_norm:
-            self.ln1 = nn.LayerNorm(self.embed_dims)
-
-    def init_weights(self):
-        logger = get_root_logger()
-        if self.init_cfg is None:
-            logger.warn(f'No pre-trained weights for '
-                        f'{self.__class__.__name__}, '
-                        f'training start from scratch')
-        else:
-            assert 'checkpoint' in self.init_cfg, f'Only support ' \
-                                                  f'specify `Pretrained` in ' \
-                                                  f'`init_cfg` in ' \
-                                                  f'{self.__class__.__name__} '
-            load_checkpoint(self,
-                            self.init_cfg['checkpoint'], map_location='cpu', logger=logger, strict=False,
-                            revise_keys=[(r'^backbone.', '')])
-            logger.warn(f'Load pre-trained model for '
-                        f'{self.__class__.__name__} from original repo')
+            self.ln1 = nn.LayerNorm(self.embed_dims[-1])
 
     def forward(self, x):
         B = x.shape[0]
@@ -442,20 +387,23 @@ class VVRWKV(BaseModule):
 
                 out = patch_token
                 outs.append(out)
+
+            if i != len(self.layers) - 1:
+                x = rearrange(x, 'b (h w) c -> b c h w', h=patch_resolution[0], w=patch_resolution[1])
+                x = self.down_samples[i](x)
+                patch_resolution = tuple(x.shape[2:])
+                x = rearrange(x, 'b c h w -> b (h w) c')
         return tuple(outs)
 
 
 if __name__ == "__main__":
-    model = VVRWKV(
+    model = RSRWKV(
         img_size=224,
         patch_size=16,
-        in_channels=3,
-        out_indices=[2, 5, 8, 11],
-        drop_rate=0.,
         embed_dims=192,
-        depth=12,
-        pretrained="checkpoints/latest.pth"
+        layer_depth=3,
     ).cuda()
+    print(f"params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     x = torch.randn(1, 3, 224, 224).cuda()
     out = model(x)
