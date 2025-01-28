@@ -265,7 +265,7 @@ class Layer(BaseModule):
 
 
 class InteractionBlock(BaseModule):
-    def __init__(self, in_feats: list[int], interpolate_mode="bilinear"):
+    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", key_norm=False):
         super().__init__()
         self.in_feats = in_feats
         self.cat_feats = sum(in_feats)
@@ -279,8 +279,12 @@ class InteractionBlock(BaseModule):
         self.receptances = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
         self.outputs = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
 
-        self.spatial_decays = nn.ParameterList(nn.Parameter(torch.ones(feat)) for feat in in_feats)
-        self.spatial_firsts = nn.ParameterList(nn.Parameter(torch.ones(feat)) for feat in in_feats)
+        with torch.no_grad():
+            self.spatial_decays = nn.ParameterList(nn.Parameter(torch.ones(feat) * 0.5) for feat in in_feats)
+            self.spatial_firsts = nn.ParameterList(nn.Parameter(torch.ones(feat) * 0.5) for feat in in_feats)
+            self.alpha = nn.Parameter(torch.ones(len(in_feats)) * 0.5)
+
+        self.norms = nn.ModuleList(nn.LayerNorm(feat) for feat in in_feats) if key_norm else None
 
     def forward(self, xs):
         """
@@ -301,11 +305,13 @@ class InteractionBlock(BaseModule):
             k = rearrange(self.keys[i](x), "b c h w -> b (h w) c")
             v = rearrange(self.values[i](g_x), "b c h w -> b (h w) c")
             wkv = RUN_CUDA(b, h * w, c, self.spatial_decays[i], self.spatial_firsts[i], k, v)
+            if self.norms is not None:
+                wkv = self.norms[i](wkv)
             wkv = rearrange(wkv, "b (h w) c -> b c h w", h=h, w=w)
             sr = torch.sigmoid(self.receptances[i](x))
             rwkv = sr * wkv
             output = self.outputs[i](rwkv)
-            x = x + output
+            x = x + output * self.alpha[i]
             outputs.append(x)
         return outputs
 
