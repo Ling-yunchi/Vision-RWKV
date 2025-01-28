@@ -271,6 +271,8 @@ class InteractionBlock(BaseModule):
         self.cat_feats = sum(in_feats)
         self.interpolate_mode = interpolate_mode
 
+        self.global_conv = nn.Conv2d(self.cat_feats, self.cat_feats, 1, bias=False)
+
         self.values = nn.ModuleList(nn.Conv2d(self.cat_feats, feat, 1, bias=False) for feat in in_feats)
         self.keys = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
         self.receptances = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
@@ -291,20 +293,22 @@ class InteractionBlock(BaseModule):
             aligned_x = F.interpolate(x, size=(max_h, max_w), mode=self.interpolate_mode)
             aligned_xs.append(aligned_x)
         global_x = torch.cat(aligned_xs, dim=1)
+        global_x = self.global_conv(global_x)
 
         outputs = []
         for i, x in enumerate(xs):
             b, c, h, w = x.shape
             g_x = global_x if h == max_h and w == max_w \
                 else F.interpolate(global_x, size=(h, w), mode=self.interpolate_mode)
-            k = rearrange(self.keys[i](xs[i]), "b c h w -> b (h w) c")
+            k = rearrange(self.keys[i](x), "b c h w -> b (h w) c")
             v = rearrange(self.values[i](g_x), "b c h w -> b (h w) c")
             wkv = RUN_CUDA(b, h * w, c, self.spatial_decays[i], self.spatial_firsts[i], k, v)
             wkv = rearrange(wkv, "b (h w) c -> b c h w", h=h, w=w)
-            sr = torch.sigmoid(self.receptances[i](xs[i]))
+            sr = torch.sigmoid(self.receptances[i](x))
             rwkv = sr * wkv
             output = self.outputs[i](rwkv)
-            outputs.append(output)
+            x = x + output
+            outputs.append(x)
         return outputs
 
 
