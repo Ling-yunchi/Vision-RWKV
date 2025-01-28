@@ -265,26 +265,18 @@ class Layer(BaseModule):
 
 
 class InteractionBlock(BaseModule):
-    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", key_norm=False):
+    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", attn_dropout=0.0):
         super().__init__()
         self.in_feats = in_feats
         self.cat_feats = sum(in_feats)
-        self.global_feat = max(in_feats)
         self.interpolate_mode = interpolate_mode
 
-        self.global_trans = nn.Linear(self.cat_feats, self.global_feat)
+        self.feat_trans = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
+        self.global_trans = nn.Linear(self.cat_feats, 1, bias=False)
 
-        self.values = nn.ModuleList(nn.Conv2d(self.global_feat, feat, 1, bias=False) for feat in in_feats)
-        self.keys = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
-        self.receptances = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
-        self.outputs = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
-
-        with torch.no_grad():
-            self.spatial_decays = nn.ParameterList(nn.Parameter(torch.ones(feat) * 0.5) for feat in in_feats)
-            self.spatial_firsts = nn.ParameterList(nn.Parameter(torch.ones(feat) * 0.5) for feat in in_feats)
-            self.alpha = nn.Parameter(torch.ones(len(in_feats)) * 0.5)
-
-        self.norms = nn.ModuleList(nn.LayerNorm(feat) for feat in in_feats) if key_norm else None
+        self.kvs = nn.ModuleList([nn.Conv2d(feat, feat * 2, 1, bias=False) for feat in in_feats])
+        self.attn_drop = nn.Dropout(attn_dropout)
+        self.out_projs = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
 
     def forward(self, xs):
         """
@@ -293,26 +285,26 @@ class InteractionBlock(BaseModule):
         max_h, max_w = max(x.shape[2] for x in xs), max(x.shape[3] for x in xs)
 
         aligned_xs = [F.interpolate(x, size=(max_h, max_w), mode=self.interpolate_mode) for x in xs]
-        global_x = rearrange(torch.cat(aligned_xs, dim=1), "b c h w -> b h w c")
+        aligned_xs = [trans(x) for x, trans in zip(aligned_xs, self.feat_trans)]
+        global_x = rearrange(torch.cat(aligned_xs, dim=1), "b c h w -> b (h w) c")
         global_x = self.global_trans(global_x)
-        global_x = rearrange(global_x, "b h w c -> b c h w")
+        context_scores = F.softmax(global_x, dim=-1)
+        context_scores = self.attn_drop(context_scores)
+        context_scores = rearrange(context_scores, "b (h w) c -> b c h w", h=max_h, w=max_w)
 
         outputs = []
         for i, x in enumerate(xs):
             b, c, h, w = x.shape
-            g_x = global_x if h == max_h and w == max_w \
-                else F.interpolate(global_x, size=(h, w), mode=self.interpolate_mode)
-            k = rearrange(self.keys[i](x), "b c h w -> b (h w) c")
-            v = rearrange(self.values[i](g_x), "b c h w -> b (h w) c")
-            wkv = RUN_CUDA(b, h * w, c, self.spatial_decays[i], self.spatial_firsts[i], k, v)
-            if self.norms is not None:
-                wkv = self.norms[i](wkv)
-            wkv = rearrange(wkv, "b (h w) c -> b c h w", h=h, w=w)
-            sr = torch.sigmoid(self.receptances[i](x))
-            rwkv = sr * wkv
-            output = self.outputs[i](rwkv)
-            x = x + output * self.alpha[i]
-            outputs.append(x)
+            q = context_scores if h == max_h and w == max_w \
+                else F.interpolate(context_scores, size=(h, w), mode=self.interpolate_mode)
+            k, v = torch.split(self.kvs[i](x), self.in_feats[i], dim=1)
+            qk = k * q
+            qk = torch.sum(qk, dim=1, keepdim=True)
+
+            output = F.relu(v) * qk
+            output = self.out_projs[i](output)
+            output = output + x
+            outputs.append(output)
         return outputs
 
 
