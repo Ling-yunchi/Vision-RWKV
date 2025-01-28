@@ -16,7 +16,8 @@ model = dict(
         type='RSRWKV',
         img_size=224,
         patch_size=16,
-        embed_dims=192,
+        embed_dims=[192, 192, 192, 192],
+        out_indices=[0, 1, 2, 3],
         layer_depth=3,
         drop_path_rate=0.1,
         hidden_rate=2,
@@ -46,7 +47,7 @@ test_pipeline = [
         ])
 ]
 optimizer = dict(_delete_=True, type='AdamW', lr=48e-4, betas=(0.9, 0.999), weight_decay=0.01,
-                #  constructor='MyLayerDecayOptimizerConstructor',
+                 #  constructor='MyLayerDecayOptimizerConstructor',
                  paramwise_cfg=dict(num_layers=12, layer_decay_rate=0.95))
 lr_config = dict(_delete_=True, policy='poly',
                  warmup='linear',
