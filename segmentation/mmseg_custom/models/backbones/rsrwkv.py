@@ -269,11 +269,12 @@ class InteractionBlock(BaseModule):
         super().__init__()
         self.in_feats = in_feats
         self.cat_feats = sum(in_feats)
+        self.global_feat = max(in_feats)
         self.interpolate_mode = interpolate_mode
 
-        self.global_conv = nn.Conv2d(self.cat_feats, self.cat_feats, 1, bias=False)
+        self.global_trans = nn.Linear(self.cat_feats, self.global_feat)
 
-        self.values = nn.ModuleList(nn.Conv2d(self.cat_feats, feat, 1, bias=False) for feat in in_feats)
+        self.values = nn.ModuleList(nn.Conv2d(self.global_feat, feat, 1, bias=False) for feat in in_feats)
         self.keys = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
         self.receptances = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
         self.outputs = nn.ModuleList(nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats)
@@ -287,13 +288,10 @@ class InteractionBlock(BaseModule):
         """
         max_h, max_w = max(x.shape[2] for x in xs), max(x.shape[3] for x in xs)
 
-        # fuse all features
-        aligned_xs = []
-        for x in xs:
-            aligned_x = F.interpolate(x, size=(max_h, max_w), mode=self.interpolate_mode)
-            aligned_xs.append(aligned_x)
-        global_x = torch.cat(aligned_xs, dim=1)
-        global_x = self.global_conv(global_x)
+        aligned_xs = [F.interpolate(x, size=(max_h, max_w), mode=self.interpolate_mode) for x in xs]
+        global_x = rearrange(torch.cat(aligned_xs, dim=1), "b c h w -> b h w c")
+        global_x = self.global_trans(global_x)
+        global_x = rearrange(global_x, "b h w c -> b c h w")
 
         outputs = []
         for i, x in enumerate(xs):
