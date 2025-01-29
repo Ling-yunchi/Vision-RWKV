@@ -267,6 +267,47 @@ class Layer(BaseModule):
         return x
 
 
+class InteractionBlock(BaseModule):
+    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", attn_dropout=0.1):
+        super().__init__()
+        self.in_feats = in_feats
+        self.cat_feats = sum(in_feats)
+        self.interpolate_mode = interpolate_mode
+
+        self.feat_trans = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
+        self.global_trans = nn.Linear(self.cat_feats, 1, bias=False)
+
+        self.kvs = nn.ModuleList([nn.Conv2d(feat, feat * 2, 1, bias=False) for feat in in_feats])
+        self.attn_drop = nn.Dropout(attn_dropout)
+        self.out_projs = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
+
+    def forward(self, xs):
+        """
+        xs: list (B C H W) tensor
+        """
+        max_h, max_w = max(x.shape[2] for x in xs), max(x.shape[3] for x in xs)
+
+        aligned_xs = [F.interpolate(x, size=(max_h, max_w), mode=self.interpolate_mode) for x in xs]
+        aligned_xs = [trans(x) for x, trans in zip(aligned_xs, self.feat_trans)]
+        global_x = rearrange(torch.cat(aligned_xs, dim=1), "b c h w -> b (h w) c")
+        global_x = self.global_trans(global_x)
+        context_scores = F.softmax(global_x, dim=-1)
+        context_scores = self.attn_drop(context_scores)
+        context_scores = rearrange(context_scores, "b (h w) c -> b c h w", h=max_h, w=max_w)
+
+        outputs = []
+        for x, kv_proj, feat, out_proj in zip(xs, self.kvs, self.in_feats, self.out_projs):
+            b, c, h, w = x.shape
+            q = context_scores if h == max_h and w == max_w \
+                else F.interpolate(context_scores, size=(h, w), mode=self.interpolate_mode)
+            k, v = torch.split(kv_proj(x), feat, dim=1)
+            qk = torch.sum(k * q, dim=1, keepdim=True)
+            output = out_proj(F.relu(v) * qk)
+            output = output + x
+            outputs.append(output)
+        return outputs
+
+
 @BACKBONES.register_module()
 class RSRWKV(BaseBackbone):
     def __init__(self,
@@ -276,7 +317,7 @@ class RSRWKV(BaseBackbone):
                  out_indices=-1,
                  drop_rate=0.,
                  embed_dims=192,
-                 layer_depth=2,
+                 layer_depth=3,
                  drop_path_rate=0.,
                  init_mode='fancy',
                  post_norm=False,
@@ -359,6 +400,9 @@ class RSRWKV(BaseBackbone):
         for i in range(self.num_layers - 1):
             self.down_samples.append(Down_wt(self.embed_dims[i], self.embed_dims[i + 1]))
 
+        self.global_interaction = InteractionBlock(
+            [dim for i, dim in enumerate(self.embed_dims) if i in self.out_indices])
+
         self.final_norm = final_norm
         if final_norm:
             self.ln1 = nn.LayerNorm(self.embed_dims[-1])
@@ -396,6 +440,8 @@ class RSRWKV(BaseBackbone):
                 x = self.down_samples[i](x)
                 patch_resolution = tuple(x.shape[2:])
                 x = rearrange(x, 'b c h w -> b (h w) c')
+
+        outs = self.global_interaction(outs)
         return tuple(outs)
 
 
@@ -405,9 +451,10 @@ if __name__ == "__main__":
         patch_size=16,
         embed_dims=192,
         layer_depth=3,
+        out_indices=[0, 1, 2, 3]
     ).cuda()
     print(f"params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     x = torch.randn(1, 3, 224, 224).cuda()
     out = model(x)
-    print(out[0].shape)
+    print([o.shape for o in out])
