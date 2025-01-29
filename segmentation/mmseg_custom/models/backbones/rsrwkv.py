@@ -265,18 +265,23 @@ class Layer(BaseModule):
 
 
 class InteractionBlock(BaseModule):
-    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", attn_dropout=0.1):
+    def __init__(self, in_feats: list[int], out_indices: list[int], interpolate_mode="bilinear", attn_dropout=0.1):
         super().__init__()
         self.in_feats = in_feats
         self.cat_feats = sum(in_feats)
         self.interpolate_mode = interpolate_mode
+        self.out_indices = out_indices
 
         self.feat_trans = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
         self.global_trans = nn.Linear(self.cat_feats, 1, bias=False)
 
-        self.kvs = nn.ModuleList([nn.Conv2d(feat, feat * 2, 1, bias=False) for feat in in_feats])
+        self.kvs = nn.ModuleList([nn.Conv2d(feat, feat * 2, 1, bias=False)
+                                  if i in self.out_indices else nn.Identity()
+                                  for i, feat in enumerate(in_feats)])
         self.attn_drop = nn.Dropout(attn_dropout)
-        self.out_projs = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False) for feat in in_feats])
+        self.out_projs = nn.ModuleList([nn.Conv2d(feat, feat, 1, bias=False)
+                                        if i in self.out_indices else nn.Identity()
+                                        for i, feat in enumerate(in_feats)])
 
     def forward(self, xs):
         """
@@ -293,7 +298,9 @@ class InteractionBlock(BaseModule):
         context_scores = rearrange(context_scores, "b (h w) c -> b c h w", h=max_h, w=max_w)
 
         outputs = []
-        for x, kv_proj, feat, out_proj in zip(xs, self.kvs, self.in_feats, self.out_projs, strict=True):
+        for i, (x, kv_proj, feat, out_proj) in enumerate(zip(xs, self.kvs, self.in_feats, self.out_projs, strict=True)):
+            if i not in self.out_indices:
+                continue
             b, c, h, w = x.shape
             q = context_scores if h == max_h and w == max_w \
                 else F.interpolate(context_scores, size=(h, w), mode=self.interpolate_mode)
@@ -397,7 +404,7 @@ class RSRWKV(BaseModule):
         for i in range(self.num_layers - 1):
             self.down_samples.append(Down_wt(self.embed_dims[i], self.embed_dims[i + 1]))
 
-        self.global_interaction = InteractionBlock(self.embed_dims)
+        self.global_interaction = InteractionBlock(self.embed_dims, self.out_indices)
 
         self.final_norm = final_norm
         if final_norm:
@@ -432,7 +439,6 @@ class RSRWKV(BaseModule):
                 x = rearrange(x, 'b c h w -> b (h w) c')
 
         outs = self.global_interaction(outs)
-        outs = [out for i, out in enumerate(outs) if i in self.out_indices]
         return tuple(outs)
 
 
