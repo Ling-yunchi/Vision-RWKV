@@ -296,7 +296,7 @@ class InteractionBlock(BaseModule):
         context_scores = rearrange(context_scores, "b (h w) c -> b c h w", h=max_h, w=max_w)
 
         outputs = []
-        for x, kv_proj, feat, out_proj in zip(xs, self.kvs, self.in_feats, self.out_projs):
+        for x, kv_proj, feat, out_proj in zip(xs, self.kvs, self.in_feats, self.out_projs, strict=True):
             b, c, h, w = x.shape
             q = context_scores if h == max_h and w == max_w \
                 else F.interpolate(context_scores, size=(h, w), mode=self.interpolate_mode)
@@ -370,7 +370,7 @@ class RSRWKV(BaseBackbone):
         for i, index in enumerate(out_indices):
             if index < 0:
                 out_indices[i] = self.num_layers + index
-            assert 0 <= out_indices[i] <= self.num_layers, \
+            assert 0 <= out_indices[i] < self.num_layers, \
                 f'Invalid out_indices {index}'
         self.out_indices = out_indices
 
@@ -400,15 +400,13 @@ class RSRWKV(BaseBackbone):
         for i in range(self.num_layers - 1):
             self.down_samples.append(Down_wt(self.embed_dims[i], self.embed_dims[i + 1]))
 
-        self.global_interaction = InteractionBlock(
-            [dim for i, dim in enumerate(self.embed_dims) if i in self.out_indices])
+        self.global_interaction = InteractionBlock(self.embed_dims)
 
         self.final_norm = final_norm
         if final_norm:
             self.ln1 = nn.LayerNorm(self.embed_dims[-1])
 
     def forward(self, x):
-        B = x.shape[0]
         x, patch_resolution = self.patch_embed(x)
 
         x = x + resize_pos_embed(
@@ -427,13 +425,8 @@ class RSRWKV(BaseBackbone):
             if i == len(self.layers) - 1 and self.final_norm:
                 x = self.ln1(x)
 
-            if i in self.out_indices:
-                B, _, C = x.shape
-                patch_token = x.reshape(B, *patch_resolution, C)
-                patch_token = patch_token.permute(0, 3, 1, 2)
-
-                out = patch_token
-                outs.append(out)
+            out = rearrange(x, 'b (h w) c -> b c h w', h=patch_resolution[0], w=patch_resolution[1])
+            outs.append(out)
 
             if i != len(self.layers) - 1:
                 x = rearrange(x, 'b (h w) c -> b c h w', h=patch_resolution[0], w=patch_resolution[1])
@@ -442,6 +435,7 @@ class RSRWKV(BaseBackbone):
                 x = rearrange(x, 'b c h w -> b (h w) c')
 
         outs = self.global_interaction(outs)
+        outs = [out for i, out in enumerate(outs) if i in self.out_indices]
         return tuple(outs)
 
 
@@ -451,7 +445,7 @@ if __name__ == "__main__":
         patch_size=16,
         embed_dims=192,
         layer_depth=3,
-        out_indices=[0, 1, 2, 3]
+        out_indices=-1
     ).cuda()
     print(f"params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
