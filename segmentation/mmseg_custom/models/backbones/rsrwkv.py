@@ -265,7 +265,7 @@ class Layer(BaseModule):
 
 
 class InteractionBlock(BaseModule):
-    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", attn_dropout=0.0):
+    def __init__(self, in_feats: list[int], interpolate_mode="bilinear", attn_dropout=0.1):
         super().__init__()
         self.in_feats = in_feats
         self.cat_feats = sum(in_feats)
@@ -293,16 +293,13 @@ class InteractionBlock(BaseModule):
         context_scores = rearrange(context_scores, "b (h w) c -> b c h w", h=max_h, w=max_w)
 
         outputs = []
-        for i, x in enumerate(xs):
+        for x, kv_proj, feat, out_proj in zip(xs, self.kvs, self.in_feats, self.out_projs):
             b, c, h, w = x.shape
             q = context_scores if h == max_h and w == max_w \
                 else F.interpolate(context_scores, size=(h, w), mode=self.interpolate_mode)
-            k, v = torch.split(self.kvs[i](x), self.in_feats[i], dim=1)
-            qk = k * q
-            qk = torch.sum(qk, dim=1, keepdim=True)
-
-            output = F.relu(v) * qk
-            output = self.out_projs[i](output)
+            k, v = torch.split(kv_proj(x), feat, dim=1)
+            qk = torch.sum(k * q, dim=1, keepdim=True)
+            output = out_proj(F.relu(v) * qk)
             output = output + x
             outputs.append(output)
         return outputs
