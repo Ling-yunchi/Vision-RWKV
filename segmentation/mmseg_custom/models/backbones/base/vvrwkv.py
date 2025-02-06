@@ -15,6 +15,7 @@ from mmcv.runner.base_module import BaseModule, ModuleList
 from mmseg.models import BACKBONES
 from mmseg.utils import get_root_logger
 
+from mmseg_custom.models.backbones.base.channel_attn import ECA
 from mmseg_custom.models.backbones.base.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
 from mmseg_custom.models.backbones.base.shift import OmniShift
@@ -152,55 +153,47 @@ class VRWKV_SpatialMix(BaseModule):
         return x
 
 
-class SeparableAttention(nn.Module):
-    def __init__(self, embed_dim, hidden_dim, attn_dropout=0.0):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.qkv_proj = nn.Conv2d(embed_dim, 1 + (hidden_dim * 2), 1)
-        self.attn_drop = nn.Dropout(attn_dropout)
-        self.out_proj = nn.Conv2d(hidden_dim, embed_dim, 1)
+class FeedForward(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, bias):
+        super(FeedForward, self).__init__()
+
+        hidden_features = int(dim * ffn_expansion_factor)
+
+        self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
+
+        self.dwconv3x3 = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=3, stride=1, padding=1,
+                                   groups=hidden_features * 2, bias=bias)
+        self.dwconv5x5 = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=5, stride=1, padding=2,
+                                   groups=hidden_features * 2, bias=bias)
+        self.relu3 = nn.ReLU()
+        self.relu5 = nn.ReLU()
+
+        self.dwconv3x3_1 = nn.Conv2d(hidden_features * 2, hidden_features, kernel_size=3, stride=1, padding=1,
+                                     groups=hidden_features, bias=bias)
+        self.dwconv5x5_1 = nn.Conv2d(hidden_features * 2, hidden_features, kernel_size=5, stride=1, padding=2,
+                                     groups=hidden_features, bias=bias)
+
+        self.relu3_1 = nn.ReLU()
+        self.relu5_1 = nn.ReLU()
+
+        self.project_out = nn.Conv2d(hidden_features * 2, dim, kernel_size=1, bias=bias)
 
     def forward(self, x):
-        """
-        x: B H W C
-        """
-        qkv = self.qkv_proj(x)
-        query, key, value = torch.split(qkv, [1, self.hidden_dim, self.hidden_dim], dim=1)
+        x = self.project_in(x)
+        x1_3, x2_3 = self.relu3(self.dwconv3x3(x)).chunk(2, dim=1)
+        x1_5, x2_5 = self.relu5(self.dwconv5x5(x)).chunk(2, dim=1)
 
-        context_scores = F.softmax(query, dim=-1)
-        context_scores = self.attn_drop(context_scores)  # B H W 1
+        x1 = torch.cat([x1_3, x1_5], dim=1)
+        x2 = torch.cat([x2_3, x2_5], dim=1)
 
-        context_vector = key * context_scores  # B H W D
-        context_vector = torch.sum(context_vector, dim=-1, keepdim=True)  # B H W 1
+        x1 = self.relu3_1(self.dwconv3x3_1(x1))
+        x2 = self.relu5_1(self.dwconv5x5_1(x2))
 
-        output = F.relu(value) * context_vector  # B H W D
-        output = self.out_proj(output)
-        return output
+        x = torch.cat([x1, x2], dim=1)
 
+        x = self.project_out(x)
 
-class ECA(nn.Module):
-    """Constructs a ECA module.
-
-    Args:
-        channel: Number of channels of the input feature map
-        k_size: Adaptive selection of kernel size
-    """
-
-    def __init__(self, channel, k_size=None):
-        super(ECA, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        if k_size is None:
-            t = int(abs((math.log(channel, 2) + 1) / 2))
-            k_size = k_size if t % 2 else t + 1
-        self.k_size = k_size
-        self.conv = nn.Conv1d(1, 1, kernel_size=self.k_size, padding=(k_size - 1) // 2, bias=False)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        y = self.avg_pool(x)
-        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
-        y = self.sigmoid(y)
-        return x * y.expand_as(x)
+        return x
 
 
 class VRWKV_ChannelMix(BaseModule):
@@ -216,19 +209,21 @@ class VRWKV_ChannelMix(BaseModule):
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
         self.omni_shift = OmniShift(dim=n_embd)
 
+        self.ffn = FeedForward(dim=n_embd, ffn_expansion_factor=hidden_rate, bias=True)
+
         self.channel_attn = ECA(n_embd)
 
-        hidden_sz = hidden_rate * n_embd
-        self.key = nn.Linear(n_embd, hidden_sz, bias=False)
-        if key_norm:
-            self.key_norm = nn.LayerNorm(hidden_sz)
-        else:
-            self.key_norm = None
-        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
-        self.value = nn.Linear(hidden_sz, n_embd, bias=False)
-
-        self.value.scale_init = 0
-        self.receptance.scale_init = 0
+        # hidden_sz = hidden_rate * n_embd
+        # self.key = nn.Linear(n_embd, hidden_sz, bias=False)
+        # if key_norm:
+        #     self.key_norm = nn.LayerNorm(hidden_sz)
+        # else:
+        #     self.key_norm = None
+        # self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        # self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+        #
+        # self.value.scale_init = 0
+        # self.receptance.scale_init = 0
 
     def _init_weights(self, init_mode):
         pass
@@ -239,16 +234,18 @@ class VRWKV_ChannelMix(BaseModule):
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.omni_shift(x)
-            x = rearrange(x, "b c h w -> b (h w) c")
+            # x = rearrange(x, "b c h w -> b (h w) c")
 
-            k = self.key(x)
-            k = torch.square(torch.relu(k))
-            if self.key_norm is not None:
-                k = self.key_norm(k)
-            kv = self.value(k)
-            x = torch.sigmoid(self.receptance(x)) * kv
+            # k = self.key(x)
+            # k = torch.square(torch.relu(k))
+            # if self.key_norm is not None:
+            #     k = self.key_norm(k)
+            # kv = self.value(k)
+            # x = torch.sigmoid(self.receptance(x)) * kv
 
-            x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+            x = self.ffn(x)
+
+            # x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.channel_attn(x)
             x = rearrange(x, "b c h w -> b (h w) c")
             return x
@@ -457,6 +454,10 @@ if __name__ == "__main__":
         pretrained="checkpoints/latest.pth"
     ).cuda()
 
+    from thop import profile
+
     x = torch.randn(1, 3, 224, 224).cuda()
-    out = model(x)
-    print(out[0].shape)
+    # out = model(x)
+    flops, params = profile(model, inputs=(x,))
+    print(f"flops: {flops}, params: {params}")
+    print(f"flops: {flops / 1000000.0:.2f} M, params: {params / 1000000.0:.2f} M")

@@ -369,10 +369,6 @@ class VVRWKV(BaseBackbone):
 
 
 if __name__ == "__main__":
-    # separate_attn = SeparableAttention(embed_dim=4, hidden_dim=256)
-    # x = torch.randn(1, 4, 4, 4)
-    # out = separate_attn(x)
-    # print(out.shape)
     model = VVRWKV(
         img_size=224,
         patch_size=16,
@@ -380,6 +376,10 @@ if __name__ == "__main__":
         depth=12,
     ).cuda()
 
+    from thop import profile
+
     x = torch.randn(1, 3, 224, 224).cuda()
-    out = model(x)
-    print(out[0].shape)
+    # out = model(x)
+    flops, params = profile(model, inputs=(x,))
+    print(f"flops: {flops}, params: {params}")
+    print(f"flops: {flops / 1000000.0:.2f} M, params: {params / 1000000.0:.2f} M")
