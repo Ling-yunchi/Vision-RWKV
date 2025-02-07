@@ -37,7 +37,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.omni_shift = OmniShift(dim=n_embd)
 
         self.num_experts = 4
-        self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
+        # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self._init_weights(init_mode)
 
@@ -48,7 +48,8 @@ class VRWKV_SpatialMix(BaseModule):
             self.key_norm = nn.LayerNorm(self.attn_sz)
         else:
             self.key_norm = None
-        self.output = nn.Linear(self.attn_sz, n_embd, bias=False)
+
+        self.output = nn.Linear(self.attn_sz * self.num_experts, n_embd, bias=False)
 
         self.key.scale_init = 0
         self.receptance.scale_init = 0
@@ -102,10 +103,10 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
-            score = F.softmax(
-                self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            )  # b e h w
-            score = score.unsqueeze(1)  # b 1 e h w
+            # score = F.softmax(
+            #     self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
+            # )  # b e h w
+            # score = score.unsqueeze(1)  # b 1 e h w
 
             sr, k, v = self.jit_func(x, patch_resolution)
 
@@ -138,12 +139,12 @@ class VRWKV_SpatialMix(BaseModule):
 
             expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
             expert_outputs = expert_outputs * sr
-            expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
-                                       h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
-            prediction = torch.sum(expert_outputs * score, dim=2)
 
-            x = rearrange(prediction, "b c h w -> b (h w) c")
-            x = self.output(x)
+            # expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
+            #                            h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
+            # prediction = torch.sum(expert_outputs * score, dim=2)
+
+            x = self.output(expert_outputs)
             return x
 
         if self.with_cp and x.requires_grad:
@@ -209,21 +210,19 @@ class VRWKV_ChannelMix(BaseModule):
         # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
         self.omni_shift = OmniShift(dim=n_embd)
 
-        self.ffn = FeedForward(dim=n_embd, ffn_expansion_factor=hidden_rate, bias=True)
-
         self.channel_attn = ECA(n_embd)
 
-        # hidden_sz = hidden_rate * n_embd
-        # self.key = nn.Linear(n_embd, hidden_sz, bias=False)
-        # if key_norm:
-        #     self.key_norm = nn.LayerNorm(hidden_sz)
-        # else:
-        #     self.key_norm = None
-        # self.receptance = nn.Linear(n_embd, n_embd, bias=False)
-        # self.value = nn.Linear(hidden_sz, n_embd, bias=False)
-        #
-        # self.value.scale_init = 0
-        # self.receptance.scale_init = 0
+        hidden_sz = hidden_rate * n_embd
+        self.key = nn.Linear(n_embd, hidden_sz, bias=False)
+        if key_norm:
+            self.key_norm = nn.LayerNorm(hidden_sz)
+        else:
+            self.key_norm = None
+        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(hidden_sz, n_embd, bias=False)
+
+        self.value.scale_init = 0
+        self.receptance.scale_init = 0
 
     def _init_weights(self, init_mode):
         pass
@@ -234,18 +233,16 @@ class VRWKV_ChannelMix(BaseModule):
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.omni_shift(x)
-            # x = rearrange(x, "b c h w -> b (h w) c")
+            x = rearrange(x, "b c h w -> b (h w) c")
 
-            # k = self.key(x)
-            # k = torch.square(torch.relu(k))
-            # if self.key_norm is not None:
-            #     k = self.key_norm(k)
-            # kv = self.value(k)
-            # x = torch.sigmoid(self.receptance(x)) * kv
+            k = self.key(x)
+            k = torch.square(torch.relu(k))
+            if self.key_norm is not None:
+                k = self.key_norm(k)
+            kv = self.value(k)
+            x = torch.sigmoid(self.receptance(x)) * kv
 
-            x = self.ffn(x)
-
-            # x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+            x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
             x = self.channel_attn(x)
             x = rearrange(x, "b c h w -> b (h w) c")
             return x
