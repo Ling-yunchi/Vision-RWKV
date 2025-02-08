@@ -30,12 +30,9 @@ class VRWKV_SpatialMix(BaseModule):
         self.device = None
         self.attn_sz = n_embd
 
-        # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        # self.omni_shift = OmniShift(dim=n_embd)
         self.mvc_shift = MVCShift(n_embd)
 
         self.num_experts = 4
-        self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self._init_weights(init_mode)
 
@@ -46,7 +43,8 @@ class VRWKV_SpatialMix(BaseModule):
             self.key_norm = nn.LayerNorm(self.attn_sz)
         else:
             self.key_norm = None
-        self.output = nn.Linear(self.attn_sz, n_embd, bias=False)
+
+        self.output = nn.Linear(self.attn_sz * self.num_experts, n_embd, bias=False)
 
         self.key.scale_init = 0
         self.receptance.scale_init = 0
@@ -59,6 +57,7 @@ class VRWKV_SpatialMix(BaseModule):
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
+                ratio_1_to_almost0 = (1.0 - (self.layer_id / self.n_layer))  # 1 to ~0
 
                 # fancy time_decay
                 decay_speed = torch.ones(multi_dim)
@@ -98,11 +97,6 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
-            score = F.softmax(
-                self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            )  # b e h w
-            score = score.unsqueeze(1)  # b 1 e h w
-
             sr, k, v = self.jit_func(x, patch_resolution)
 
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
@@ -134,12 +128,8 @@ class VRWKV_SpatialMix(BaseModule):
 
             expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
             expert_outputs = expert_outputs * sr
-            expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
-                                       h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
-            prediction = torch.sum(expert_outputs * score, dim=2)
 
-            x = rearrange(prediction, "b c h w -> b (h w) c")
-            x = self.output(x)
+            x = self.output(expert_outputs)
             return x
 
         if self.with_cp and x.requires_grad:

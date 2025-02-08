@@ -389,3 +389,19 @@ class VRWKV(BaseBackbone):
                 out = patch_token
                 outs.append(out)
         return tuple(outs)
+
+if __name__ == "__main__":
+    model = VRWKV(
+        img_size=224,
+        patch_size=16,
+        embed_dims=192,
+        depth=12,
+    ).cuda()
+
+    from thop import profile
+
+    x = torch.randn(1, 3, 224, 224).cuda()
+    # out = model(x)
+    flops, params = profile(model, inputs=(x,))
+    print(f"flops: {flops}, params: {params}")
+    print(f"flops: {flops / 1000000.0:.2f} M, params: {params / 1000000.0:.2f} M")

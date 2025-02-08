@@ -18,7 +18,7 @@ from mmseg.utils import get_root_logger
 from mmseg_custom.models.backbones.base.channel_attn import ECA
 from mmseg_custom.models.backbones.base.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
 from mmseg_custom.models.backbones.base.wkv import RUN_CUDA
-from mmseg_custom.models.backbones.base.shift import OmniShift
+from mmseg_custom.models.backbones.base.shift import MVCShift
 from mmseg_custom.models.utils import DropPath, resize_pos_embed
 
 logger = logging.getLogger(__name__)
@@ -33,11 +33,9 @@ class VRWKV_SpatialMix(BaseModule):
         self.device = None
         self.attn_sz = n_embd
 
-        # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        self.mvc_shift = MVCShift(n_embd)
 
         self.num_experts = 4
-        # self.gate = nn.Conv2d(n_embd, self.num_experts, 1)
 
         self._init_weights(init_mode)
 
@@ -83,10 +81,9 @@ class VRWKV_SpatialMix(BaseModule):
             raise NotImplementedError
 
     def jit_func(self, x, patch_resolution):
-        # x = self.uw_shift(x, patch_resolution)
         h, w = patch_resolution
         x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-        x = self.omni_shift(x)
+        x = self.mvc_shift(x)
         x = rearrange(x, "b c h w -> b (h w) c")
 
         # Use xk, xv, xr to produce k, v, r
@@ -103,11 +100,6 @@ class VRWKV_SpatialMix(BaseModule):
             self.device = x.device
 
             h, w = patch_resolution
-            # score = F.softmax(
-            #     self.gate(rearrange(x, "b (h w) c -> b c h w", h=h, w=w)), dim=1
-            # )  # b e h w
-            # score = score.unsqueeze(1)  # b 1 e h w
-
             sr, k, v = self.jit_func(x, patch_resolution)
 
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
@@ -140,10 +132,6 @@ class VRWKV_SpatialMix(BaseModule):
             expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
             expert_outputs = expert_outputs * sr
 
-            # expert_outputs = rearrange(expert_outputs, "b (h w) (c e) -> b c e h w",
-            #                            h=h, w=w, c=self.attn_sz, e=self.num_experts)  # b c e h w
-            # prediction = torch.sum(expert_outputs * score, dim=2)
-
             x = self.output(expert_outputs)
             return x
 
@@ -151,49 +139,6 @@ class VRWKV_SpatialMix(BaseModule):
             x = cp.checkpoint(_inner_forward, x)
         else:
             x = _inner_forward(x)
-        return x
-
-
-class FeedForward(nn.Module):
-    def __init__(self, dim, ffn_expansion_factor, bias):
-        super(FeedForward, self).__init__()
-
-        hidden_features = int(dim * ffn_expansion_factor)
-
-        self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
-
-        self.dwconv3x3 = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=3, stride=1, padding=1,
-                                   groups=hidden_features * 2, bias=bias)
-        self.dwconv5x5 = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=5, stride=1, padding=2,
-                                   groups=hidden_features * 2, bias=bias)
-        self.relu3 = nn.ReLU()
-        self.relu5 = nn.ReLU()
-
-        self.dwconv3x3_1 = nn.Conv2d(hidden_features * 2, hidden_features, kernel_size=3, stride=1, padding=1,
-                                     groups=hidden_features, bias=bias)
-        self.dwconv5x5_1 = nn.Conv2d(hidden_features * 2, hidden_features, kernel_size=5, stride=1, padding=2,
-                                     groups=hidden_features, bias=bias)
-
-        self.relu3_1 = nn.ReLU()
-        self.relu5_1 = nn.ReLU()
-
-        self.project_out = nn.Conv2d(hidden_features * 2, dim, kernel_size=1, bias=bias)
-
-    def forward(self, x):
-        x = self.project_in(x)
-        x1_3, x2_3 = self.relu3(self.dwconv3x3(x)).chunk(2, dim=1)
-        x1_5, x2_5 = self.relu5(self.dwconv5x5(x)).chunk(2, dim=1)
-
-        x1 = torch.cat([x1_3, x1_5], dim=1)
-        x2 = torch.cat([x2_3, x2_5], dim=1)
-
-        x1 = self.relu3_1(self.dwconv3x3_1(x1))
-        x2 = self.relu5_1(self.dwconv5x5_1(x2))
-
-        x = torch.cat([x1, x2], dim=1)
-
-        x = self.project_out(x)
-
         return x
 
 
@@ -207,8 +152,7 @@ class VRWKV_ChannelMix(BaseModule):
         self.with_cp = with_cp
         self._init_weights(init_mode)
 
-        # self.uw_shift = UWShift(n_features=n_embd, kernel_size=7)
-        self.omni_shift = OmniShift(dim=n_embd)
+        self.mvc_shift = MVCShift(n_embd)
 
         self.channel_attn = ECA(n_embd)
 
@@ -229,10 +173,9 @@ class VRWKV_ChannelMix(BaseModule):
 
     def forward(self, x, patch_resolution=None):
         def _inner_forward(x):
-            # x = self.uw_shift(x, patch_resolution)
             h, w = patch_resolution
             x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
-            x = self.omni_shift(x)
+            x = self.mvc_shift(x)
             x = rearrange(x, "b c h w -> b (h w) c")
 
             k = self.key(x)
