@@ -44,7 +44,7 @@ class ECA(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         if k_size is None:
             t = int(abs((math.log(channel, 2) + 1) / 2))
-            k_size = k_size if t % 2 else t + 1
+            k_size = t if t % 2 else t + 1
         self.k_size = k_size
         self.conv = nn.Conv1d(1, 1, kernel_size=self.k_size, padding=(k_size - 1) // 2, bias=False)
         self.sigmoid = nn.Sigmoid()

@@ -440,8 +440,10 @@ if __name__ == "__main__":
         layer_depth=3,
         out_indices=[0, 1, 2, 3]
     ).cuda()
-    print(f"params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    from thop import profile
 
     x = torch.randn(1, 3, 224, 224).cuda()
-    out = model(x)
-    print([o.shape for o in out])
+    # out = model(x)
+    flops, params = profile(model, inputs=(x,))
+    print(f"flops: {flops}, params: {params}")
+    print(f"flops: {flops / 1000000.0:.2f} M, params: {params / 1000000.0:.2f} M")
