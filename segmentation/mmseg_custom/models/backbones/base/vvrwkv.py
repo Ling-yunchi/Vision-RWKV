@@ -31,23 +31,23 @@ class VRWKV_SpatialMix(BaseModule):
         self.n_layer = n_layer
         self.n_embd = n_embd
         self.device = None
-        self.attn_sz = n_embd
+        self.num_experts = 4
+        assert n_embd % self.num_experts == 0, 'n_embd must be divisible by 4'
+        self.attn_sz = n_embd // self.num_experts
 
         self.mvc_shift = MVCShift(n_embd)
 
-        self.num_experts = 4
-
         self._init_weights(init_mode)
 
-        self.key = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
-        self.receptance = nn.Linear(n_embd, self.attn_sz * self.num_experts, bias=False)
+        self.key = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(n_embd, n_embd, bias=False)
+        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         if key_norm:
-            self.key_norm = nn.LayerNorm(self.attn_sz)
+            self.key_norm = [nn.LayerNorm(self.attn_sz) for _ in range(self.num_experts)]
         else:
             self.key_norm = None
 
-        self.output = nn.Linear(self.attn_sz * self.num_experts, n_embd, bias=False)
+        self.output = nn.Linear(n_embd, n_embd, bias=False)
 
         self.key.scale_init = 0
         self.receptance.scale_init = 0
@@ -105,29 +105,26 @@ class VRWKV_SpatialMix(BaseModule):
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
+            ks = torch.split(k, self.attn_sz, dim=1)
+            vs = torch.split(v, self.attn_sz, dim=1)
+
             scan_func = [s_hw, s_wh, s_rhw, s_wrh]
             re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
 
             ks = torch.cat(
-                [scan_func[i](k) for i in range(self.num_experts)], dim=2
+                [scan_func[i](ks[i]) for i in range(self.num_experts)], dim=2
             )  # b (h w) (c e)
             vs = torch.cat(
-                [scan_func[i](v) for i in range(self.num_experts)], dim=2
+                [scan_func[i](vs[i]) for i in range(self.num_experts)], dim=2
             )  # b (h w) (c e)
 
-            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
-            spatial_first = self.spatial_first.repeat(self.num_experts) / T
-
-            expert_output = RUN_CUDA(B, T, C * self.num_experts, spatial_decay, spatial_first, ks, vs)
-            expert_outputs = [
-                expert_output[:, :, i * self.attn_sz: (i + 1) * self.attn_sz]
-                for i in range(self.num_experts)
-            ]  # (b (h w) c) * e
+            expert_output = RUN_CUDA(B, T, C, self.spatial_decay / T, self.spatial_first / T, ks, vs)
+            expert_outputs = torch.split(expert_output, self.attn_sz, dim=2) # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
                               for i in range(self.num_experts)]
 
             if self.key_norm is not None:
-                expert_outputs = [self.key_norm(eo) for eo in expert_outputs]
+                expert_outputs = [self.key_norm[i](expert_outputs[i]) for i in range(self.num_experts)]
 
             expert_outputs = torch.cat(expert_outputs, dim=2)  # b (h w) (c e)
             expert_outputs = expert_outputs * sr
@@ -143,7 +140,7 @@ class VRWKV_SpatialMix(BaseModule):
 
 
 class VRWKV_ChannelMix(BaseModule):
-    def __init__(self, n_embd, n_layer, layer_id, hidden_rate=4, init_mode='fancy',
+    def __init__(self, n_embd, n_layer, layer_id, hidden_rate=2, init_mode='fancy',
                  key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
@@ -198,7 +195,7 @@ class VRWKV_ChannelMix(BaseModule):
 
 
 class Block(BaseModule):
-    def __init__(self, n_embd, n_layer, layer_id, drop_path=0., hidden_rate=4,
+    def __init__(self, n_embd, n_layer, layer_id, drop_path=0., hidden_rate=2,
                  init_mode='fancy', init_values=None, post_norm=False, key_norm=False, with_cp=False):
         super().__init__()
         self.layer_id = layer_id
@@ -261,7 +258,7 @@ class VVRWKV(BaseModule):
                  post_norm=False,
                  key_norm=False,
                  init_values=None,
-                 hidden_rate=4,
+                 hidden_rate=2,
                  final_norm=True,
                  interpolate_mode='bicubic',
                  pretrained=None,

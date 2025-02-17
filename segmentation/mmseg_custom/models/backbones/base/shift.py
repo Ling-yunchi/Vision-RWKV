@@ -171,45 +171,46 @@ class MLDCShift(nn.Module):
 
 
 class MVCShift(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, compress_ratio=0.5):
         super(MVCShift, self).__init__()
+        embed_dim = int(dim * compress_ratio)
         self.conv1x1 = nn.Conv2d(
-            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+            in_channels=dim, out_channels=embed_dim, kernel_size=1, bias=False
         )
         self.conv3x3d1 = nn.Conv2d(
-            in_channels=dim,
-            out_channels=dim,
+            in_channels=embed_dim,
+            out_channels=embed_dim,
             kernel_size=3,
             padding=1,
-            groups=dim,
+            groups=embed_dim,
             bias=False,
         )
         self.conv3x3d2 = nn.Conv2d(
-            in_channels=dim,
-            out_channels=dim,
+            in_channels=embed_dim,
+            out_channels=embed_dim,
             kernel_size=3,
             padding=2,
             dilation=2,
-            groups=dim,
+            groups=embed_dim,
             bias=False,
         )
         self.conv3x3d3 = nn.Conv2d(
-            in_channels=dim,
-            out_channels=dim,
+            in_channels=embed_dim,
+            out_channels=embed_dim,
             kernel_size=3,
             padding=3,
             dilation=3,
-            groups=dim,
+            groups=embed_dim,
             bias=False,
         )
         self.conv1x1_1 = nn.Conv2d(
-            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+            in_channels=embed_dim, out_channels=dim, kernel_size=1, bias=False
         )
         self.conv1x1_2 = nn.Conv2d(
-            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+            in_channels=embed_dim, out_channels=dim, kernel_size=1, bias=False
         )
         self.conv1x1_3 = nn.Conv2d(
-            in_channels=dim, out_channels=dim, kernel_size=1, bias=False
+            in_channels=embed_dim, out_channels=dim, kernel_size=1, bias=False
         )
 
     def forward(self, x):
@@ -257,19 +258,18 @@ if __name__ == "__main__":
     dim = 192
     x = torch.ones(2, dim, 3, 3)
     omni_shift = OmniShift(dim)
-    uw_shift = UWShift(dim)
     mldc_shift = MLDCShift(dim)
     mvc_shift = MVCShift(dim)
     deform_shift = DeformShift(dim)
 
+    from thop import profile
 
-    # print all shift total params
-    def count_parameters(model):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    flops, params = profile(omni_shift, inputs=(x,))
+    print(f'OmniShift : {flops}, {params}')
+    flops, params = profile(mldc_shift, inputs=(x,))
+    print(f'MLDCShift : {flops}, {params}')
+    flops, params = profile(mvc_shift, inputs=(x,))
+    print(f'MVCShift : {flops}, {params}')
+    flops, params = profile(deform_shift, inputs=(x,))
+    print(f'DeformShift : {flops}, {params}')
 
-
-    print(f'OmniShift: {count_parameters(omni_shift)}')
-    print(f'UWShift: {count_parameters(uw_shift)}')
-    print(f'MLDCShift: {count_parameters(mldc_shift)}')
-    print(f'MVCShift: {count_parameters(mvc_shift)}')
-    print(f'DeformShift: {count_parameters(deform_shift)}')
