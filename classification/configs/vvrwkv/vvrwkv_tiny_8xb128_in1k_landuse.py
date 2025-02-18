@@ -35,7 +35,7 @@ checkpoint_config = dict(
     save_last=True)
 log_config = dict(
     interval=1)
-evaluation = dict(interval=10)
+evaluation = dict(interval=10, save_best='auto')
 # 8 gpus
 runner = dict(type='EpochBasedRunner', max_epochs=600)
 data = dict(

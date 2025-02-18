@@ -39,8 +39,8 @@ class VRWKV_SpatialMix(BaseModule):
 
         self._init_weights(init_mode)
 
-        self.key = nn.Linear(n_embd, n_embd, bias=False)
-        self.value = nn.Linear(n_embd, n_embd, bias=False)
+        self.key = nn.Linear(n_embd, self.attn_sz, bias=False)
+        self.value = nn.Linear(n_embd, self.attn_sz, bias=False)
         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         if key_norm:
             self.key_norm = [nn.LayerNorm(self.attn_sz) for _ in range(self.num_experts)]
@@ -105,21 +105,17 @@ class VRWKV_SpatialMix(BaseModule):
             k = rearrange(k, "b (h w) c -> b c h w", h=h, w=w)
             v = rearrange(v, "b (h w) c -> b c h w", h=h, w=w)
 
-            ks = torch.split(k, self.attn_sz, dim=1)
-            vs = torch.split(v, self.attn_sz, dim=1)
-
             scan_func = [s_hw, s_wh, s_rhw, s_wrh]
             re_scan_func = [sr_hw, sr_wh, sr_rhw, sr_wrh]
 
-            ks = torch.cat(
-                [scan_func[i](ks[i]) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
-            vs = torch.cat(
-                [scan_func[i](vs[i]) for i in range(self.num_experts)], dim=2
-            )  # b (h w) (c e)
+            ks = torch.cat([scan_func[i](k) for i in range(self.num_experts)], dim=2)  # b (h w) (c e)
+            vs = torch.cat([scan_func[i](v) for i in range(self.num_experts)], dim=2)  # b (h w) (c e)
 
-            expert_output = RUN_CUDA(B, T, C, self.spatial_decay / T, self.spatial_first / T, ks, vs)
-            expert_outputs = torch.split(expert_output, self.attn_sz, dim=2) # (b (h w) c) * e
+            spatial_decay = self.spatial_decay.repeat(self.num_experts) / T
+            spatial_first = self.spatial_first.repeat(self.num_experts) / T
+
+            expert_output = RUN_CUDA(B, T, C, spatial_decay, spatial_first, ks, vs)
+            expert_outputs = torch.split(expert_output, self.attn_sz, dim=2)  # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
                               for i in range(self.num_experts)]
 
@@ -243,7 +239,7 @@ class Block(BaseModule):
         return x
 
 
-@BACKBONES.register_module()
+# @BACKBONES.register_module()
 class VVRWKV(BaseModule):
     def __init__(self,
                  img_size=224,

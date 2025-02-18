@@ -171,7 +171,7 @@ class MLDCShift(nn.Module):
 
 
 class MVCShift(nn.Module):
-    def __init__(self, dim, compress_ratio=0.5):
+    def __init__(self, dim, compress_ratio=1):
         super(MVCShift, self).__init__()
         embed_dim = int(dim * compress_ratio)
         self.conv1x1 = nn.Conv2d(

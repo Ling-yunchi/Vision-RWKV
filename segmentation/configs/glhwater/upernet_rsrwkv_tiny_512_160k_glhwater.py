@@ -14,9 +14,9 @@ model = dict(
     backbone=dict(
         _delete_=True,
         type='RSRWKV',
-        img_size=224,
+        img_size=512,
         patch_size=16,
-        embed_dims=[192, 192, 192, 192],
+        embed_dims=[192, 384, 576, 768],
         out_indices=[0, 1, 2, 3],
         layer_depth=3,
         drop_path_rate=0.1,
@@ -24,8 +24,8 @@ model = dict(
         init_values=1,
         with_cp=False,
     ),
-    decode_head=dict(num_classes=2, in_channels=[192, 192, 192, 192]),
-    auxiliary_head=dict(num_classes=2, in_channels=192),
+    decode_head=dict(num_classes=2, in_channels=[192, 384, 576, 768]),
+    auxiliary_head=dict(num_classes=2, in_channels=576),
     test_cfg=dict(mode='slide', crop_size=(512, 512), stride=(341, 341))
 )
 img_norm_cfg = dict(
@@ -46,7 +46,7 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
-optimizer = dict(_delete_=True, type='AdamW', lr=12e-4, betas=(0.9, 0.999), weight_decay=0.01,
+optimizer = dict(_delete_=True, type='AdamW', lr=1e-4, betas=(0.9, 0.999), weight_decay=0.01,
                  #  constructor='MyLayerDecayOptimizerConstructor',
                  paramwise_cfg=dict(num_layers=12, layer_decay_rate=0.95))
 lr_config = dict(_delete_=True, policy='poly',

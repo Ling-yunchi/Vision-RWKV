@@ -13,7 +13,7 @@ model = dict(
     pretrained=pretrained,
     backbone=dict(
         _delete_=True,
-        type='VVRWKV_Adapter',
+        type='VRWKV_Adapter',
         img_size=512,
         patch_size=16,
         embed_dims=192,
@@ -53,7 +53,7 @@ test_pipeline = [
         ])
 ]
 optimizer = dict(_delete_=True, type='AdamW', lr=6e-4, betas=(0.9, 0.999), weight_decay=0.01,
-                 #  constructor='MyLayerDecayOptimizerConstructor',
+                #  constructor='MyLayerDecayOptimizerConstructor',
                  paramwise_cfg=dict(num_layers=12, layer_decay_rate=0.95))
 lr_config = dict(_delete_=True, policy='poly',
                  warmup='linear',

@@ -1,7 +1,7 @@
 # Copyright (c) Shanghai AI Lab. All rights reserved.
 _base_ = [
     '../_base_/models/upernet_r50.py',
-    '../_base_/datasets/glhwater.py',
+    '../_base_/datasets/whucloud.py',
     '../_base_/default_runtime.py',
     '../_base_/schedules/schedule_160k.py'
 ]
@@ -30,8 +30,10 @@ model = dict(
         deform_ratio=1.0,
         interaction_indexes=[[0, 2], [3, 5], [6, 8], [9, 11]],
     ),
-    decode_head=dict(num_classes=2, in_channels=[192, 192, 192, 192]),
-    auxiliary_head=dict(num_classes=2, in_channels=192),
+    decode_head=dict(num_classes=3, in_channels=[
+                     192, 192, 192, 192], loss_decode=dict(class_weight=[1.04, 34.26, 182.23],)),
+    auxiliary_head=dict(num_classes=3, in_channels=192,
+                        loss_decode=dict(class_weight=[1.04, 34.26, 182.23],)),
     test_cfg=dict(mode='slide', crop_size=(512, 512), stride=(341, 341))
 )
 img_norm_cfg = dict(
@@ -63,10 +65,10 @@ lr_config = dict(_delete_=True, policy='poly',
 log_config = dict(interval=10)
 # 8 gpus
 data = dict(samples_per_gpu=16,
-            workers_per_gpu=12,
+            workers_per_gpu=8,
             val=dict(pipeline=test_pipeline),
             test=dict(pipeline=test_pipeline))
 runner = dict(type='IterBasedRunner', max_iters=30000)
 checkpoint_config = dict(by_epoch=False, interval=1000, max_keep_ckpts=1)
-evaluation = dict(interval=5000, metric='mIoU', save_best='mIoU')
+evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
 fp16 = dict(loss_scale=dict(init_scale=512))

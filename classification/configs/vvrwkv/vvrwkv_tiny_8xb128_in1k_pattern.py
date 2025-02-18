@@ -33,7 +33,7 @@ checkpoint_config = dict(
     interval=1,
     max_keep_ckpts=2,
     save_last=True)
-evaluation = dict(interval=10)
+evaluation = dict(interval=10, save_best='auto')
 # 8 gpus
 data = dict(
     samples_per_gpu=64,
