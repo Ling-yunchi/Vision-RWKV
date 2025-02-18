@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+from einops import rearrange
 from pytorch_wavelets import DWTForward
 from torch.fft import fftshift, ifftshift, fft2, ifft2
 
@@ -45,24 +46,27 @@ class FftFilter(nn.Module):
         self.sigma_factor = sigma_factor
         self.register_buffer('gaussian_kernel', None, persistent=True)
 
-    def _compute_gaussian_kernel(self, H, W):
+    def _compute_gaussian_kernel(self, H, W, device):
         crow, ccol = H // 2, W // 2
-        y_range = torch.arange(0, H, dtype=torch.float32) - crow
-        x_range = torch.arange(0, W, dtype=torch.float32) - ccol
+        y_range = torch.arange(0, H, dtype=torch.float32, device=device) - crow
+        x_range = torch.arange(0, W, dtype=torch.float32, device=device) - ccol
         Y, X = torch.meshgrid(y_range, x_range, indexing='ij')
         gaussian_kernel = torch.exp(-(X ** 2 + Y ** 2) / (2 * (min(H, W) / 6 * self.sigma_factor) ** 2))
         return gaussian_kernel.unsqueeze(0).unsqueeze(0)
 
-    def forward(self, x):
-        N, C, H, W = x.shape
+    def forward(self, x, patch_resolution):
+        B, T, C = x.shape
+        H, W = patch_resolution
+        x = rearrange(x, "b (h w) c -> b c h w", h=H, w=W)
 
         if self.gaussian_kernel is None or self.gaussian_kernel.shape[-2:] != (H, W):
-            self.register_buffer('gaussian_kernel', self._compute_gaussian_kernel(H, W), persistent=True)
+            self.register_buffer('gaussian_kernel', self._compute_gaussian_kernel(H, W, x.device), persistent=True)
 
         f_x = fftshift(fft2(x, dim=(-2, -1)), dim=(-2, -1))
-        weighted_f_x = f_x * self.gaussian_kernel.expand(N, C, -1, -1)
+        weighted_f_x = f_x * self.gaussian_kernel.expand(B, C, -1, -1)
         weighted_x = torch.abs(ifft2(ifftshift(weighted_f_x, dim=(-2, -1)), dim=(-2, -1)))
-        return weighted_x
+        x = rearrange(weighted_x, "b c h w -> b (h w) c")
+        return x
 
 
 class Down_fft(nn.Module):
@@ -73,11 +77,11 @@ class Down_fft(nn.Module):
                                          stride=self.down_factor, padding=padding)
         self.register_buffer('gaussian_kernel', None, persistent=True)
 
-    def _compute_gaussian_kernel(self, H, W):
+    def _compute_gaussian_kernel(self, H, W, device):
         """ 计算并返回高斯核 """
         crow, ccol = H // 2, W // 2
-        y_range = torch.arange(0, H, dtype=torch.float32) - crow
-        x_range = torch.arange(0, W, dtype=torch.float32) - ccol
+        y_range = torch.arange(0, H, dtype=torch.float32, device=device) - crow
+        x_range = torch.arange(0, W, dtype=torch.float32, device=device) - ccol
         Y, X = torch.meshgrid(y_range, x_range, indexing='ij')
         gaussian_kernel = torch.exp(-(X ** 2 + Y ** 2) / (2 * (min(H, W) / 6) ** 2))
         return gaussian_kernel.unsqueeze(0).unsqueeze(0)
@@ -86,7 +90,7 @@ class Down_fft(nn.Module):
         N, C, H, W = x.shape
 
         if self.gaussian_kernel is None or self.gaussian_kernel.shape[-2:] != (H, W):
-            self.register_buffer('gaussian_kernel', self._compute_gaussian_kernel(H, W), persistent=True)
+            self.register_buffer('gaussian_kernel', self._compute_gaussian_kernel(H, W, x.device), persistent=True)
 
         f_x = fftshift(fft2(x, dim=(-2, -1)), dim=(-2, -1))
         weighted_f_x = f_x * self.gaussian_kernel.expand(N, C, -1, -1)
@@ -194,11 +198,11 @@ class Down_dct(nn.Module):
 
 
 if __name__ == '__main__':
-    x = torch.randn(1, 64, 224, 224)
-    conv = Down_conv(64)
-    wt = Down_wt(64, 64)
-    fft = Down_fft(64, 64)
-    dct = Down_dct(224, 224, 64)
+    x = torch.randn(1, 64, 224, 224).cuda()
+    conv = Down_conv(64).cuda()
+    wt = Down_wt(64, 64).cuda()
+    fft = Down_fft(64, 64).cuda()
+    dct = Down_dct(224, 224, 64).cuda()
     x_conv = conv(x)
     x_wt = wt(x)
     x_fft = fft(x)

@@ -204,6 +204,7 @@ class Block(BaseModule):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
+        self.pre_filter = pre_filter
         if pre_filter:
             self.filter = FftFilter()
 
@@ -223,7 +224,7 @@ class Block(BaseModule):
             if self.layer_id == 0:
                 x = self.ln0(x)
             if self.pre_filter:
-                x = self.filter(x)
+                x = self.filter(x, patch_resolution)
             if self.post_norm:
                 if self.layer_scale:
                     x = x + self.drop_path(self.gamma1 * self.ln1(self.att(x, patch_resolution)))
