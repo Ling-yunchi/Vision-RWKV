@@ -56,7 +56,7 @@ class VRWKV_SpatialMix(BaseModule):
         self.with_cp = with_cp
 
     def _init_weights(self, init_mode):
-        multi_dim = self.n_embd
+        multi_dim = self.attn_sz
         if init_mode == 'fancy':
             with torch.no_grad():  # fancy init
                 ratio_0_to_1 = (self.layer_id / (self.n_layer - 1))  # 0 to 1
