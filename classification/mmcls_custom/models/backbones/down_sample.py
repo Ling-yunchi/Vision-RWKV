@@ -39,6 +39,32 @@ class Down_wt(nn.Module):
         return x
 
 
+class FftFilter(nn.Module):
+    def __init__(self, sigma_factor=0.5):
+        super(FftFilter, self).__init__()
+        self.sigma_factor = sigma_factor
+        self.register_buffer('gaussian_kernel', None, persistent=True)
+
+    def _compute_gaussian_kernel(self, H, W):
+        crow, ccol = H // 2, W // 2
+        y_range = torch.arange(0, H, dtype=torch.float32) - crow
+        x_range = torch.arange(0, W, dtype=torch.float32) - ccol
+        Y, X = torch.meshgrid(y_range, x_range, indexing='ij')
+        gaussian_kernel = torch.exp(-(X ** 2 + Y ** 2) / (2 * (min(H, W) / 6 * self.sigma_factor) ** 2))
+        return gaussian_kernel.unsqueeze(0).unsqueeze(0)
+
+    def forward(self, x):
+        N, C, H, W = x.shape
+
+        if self.gaussian_kernel is None or self.gaussian_kernel.shape[-2:] != (H, W):
+            self.register_buffer('gaussian_kernel', self._compute_gaussian_kernel(H, W), persistent=True)
+
+        f_x = fftshift(fft2(x, dim=(-2, -1)), dim=(-2, -1))
+        weighted_f_x = f_x * self.gaussian_kernel.expand(N, C, -1, -1)
+        weighted_x = torch.abs(ifft2(ifftshift(weighted_f_x, dim=(-2, -1)), dim=(-2, -1)))
+        return weighted_x
+
+
 class Down_fft(nn.Module):
     def __init__(self, in_channels, out_channels, down_factor=2, kernel_size=3, padding=1):
         super(Down_fft, self).__init__()

@@ -14,6 +14,7 @@ from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner.base_module import BaseModule, ModuleList
 
 from mmcls_custom.models.backbones.channel_attn import ECA
+from mmcls_custom.models.backbones.down_sample import FftFilter
 from mmcls_custom.models.backbones.scan import s_hw, s_wh, sr_hw, sr_wh, s_rhw, s_wrh, sr_rhw, sr_wrh
 from mmcls_custom.models.backbones.shift import MVCShift
 from mmcls_custom.models.backbones.wkv import RUN_CUDA
@@ -117,7 +118,7 @@ class VRWKV_SpatialMix(BaseModule):
             )  # b (h w) (c e)
 
             expert_output = RUN_CUDA(B, T, C, self.spatial_decay / T, self.spatial_first / T, ks, vs)
-            expert_outputs = torch.split(expert_output, self.attn_sz, dim=2) # (b (h w) c) * e
+            expert_outputs = torch.split(expert_output, self.attn_sz, dim=2)  # (b (h w) c) * e
             expert_outputs = [rearrange(re_scan_func[i](expert_outputs[i], h, w), "b c h w -> b (h w) c")
                               for i in range(self.num_experts)]
 
@@ -194,7 +195,7 @@ class VRWKV_ChannelMix(BaseModule):
 
 class Block(BaseModule):
     def __init__(self, n_embd, n_layer, layer_id, drop_path=0., hidden_rate=2,
-                 init_mode='fancy', init_values=None, post_norm=False, key_norm=False, with_cp=False):
+                 init_mode='fancy', init_values=None, post_norm=False, key_norm=False, with_cp=False, pre_filter=False):
         super().__init__()
         self.layer_id = layer_id
         self.ln1 = nn.LayerNorm(n_embd)
@@ -202,6 +203,9 @@ class Block(BaseModule):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
+
+        if pre_filter:
+            self.filter = FftFilter()
 
         self.att = VRWKV_SpatialMix(n_embd, n_layer, layer_id, init_mode, key_norm=key_norm, with_cp=with_cp)
 
@@ -218,6 +222,8 @@ class Block(BaseModule):
         def _inner_forward(x):
             if self.layer_id == 0:
                 x = self.ln0(x)
+            if self.pre_filter:
+                x = self.filter(x)
             if self.post_norm:
                 if self.layer_scale:
                     x = x + self.drop_path(self.gamma1 * self.ln1(self.att(x, patch_resolution)))
@@ -251,6 +257,7 @@ class VVRWKV(BaseBackbone):
                  drop_rate=0.,
                  embed_dims=256,
                  depth=12,
+                 filter_layers=[3, 6, 9],
                  drop_path_rate=0.,
                  init_mode='fancy',
                  post_norm=False,
@@ -310,7 +317,8 @@ class VVRWKV(BaseBackbone):
                 post_norm=post_norm,
                 key_norm=key_norm,
                 init_values=init_values,
-                with_cp=with_cp
+                with_cp=with_cp,
+                pre_filter=i in filter_layers
             ))
 
         self.final_norm = final_norm
