@@ -1,82 +1,19 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Sequence
-import warnings
 import math
+import warnings
+from typing import Sequence
 
-import logging
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
 import torch.utils.checkpoint as cp
-
+from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmcv.runner import load_checkpoint
 from mmcv.runner.base_module import BaseModule, ModuleList
-from mmcv.cnn.bricks.transformer import PatchEmbed
 from mmdet.models.builder import BACKBONES
 from mmdet.utils import get_root_logger
+
+from mmdet_custom.models.backbones.base.wkv import RUN_CUDA
 from mmdet_custom.models.utils import resize_pos_embed, DropPath
-
-T_MAX = 8192  # increase this if your ctx_len is long [NOTE: TAKES LOTS OF VRAM!]
-# it's possible to go beyond CUDA limitations if you slice the ctx and pass the hidden state in each slice
-
-
-from torch.utils.cpp_extension import load
-
-wkv_cuda = load(name="wkv", sources=["mmdet_custom/models/backbones/base/cuda/wkv_op.cpp",
-                                     "mmdet_custom/models/backbones/base/cuda/wkv_cuda.cu"],
-                verbose=True,
-                extra_cuda_cflags=['-res-usage', '--maxrregcount 60', '--use_fast_math', '-O3', '-Xptxas -O3',
-                                   f'-DTmax={T_MAX}'])
-
-
-class WKV(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, B, T, C, w, u, k, v):
-        ctx.B = B
-        ctx.T = T
-        ctx.C = C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-
-        half_mode = (w.dtype == torch.half)
-        w = w.float().contiguous()
-        u = u.float().contiguous()
-        k = k.float().contiguous()
-        v = v.float().contiguous()
-
-        ctx.save_for_backward(w, u, k, v)
-        y = torch.empty((B, T, C), device='cuda', memory_format=torch.contiguous_format)
-        wkv_cuda.forward(B, T, C, w, u, k, v, y)
-        if half_mode:
-            y = y.half()
-        return y
-
-    @staticmethod
-    def backward(ctx, gy):
-        B = ctx.B
-        T = ctx.T
-        C = ctx.C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-        w, u, k, v = ctx.saved_tensors
-        gw = torch.zeros((B, C), device='cuda').contiguous()
-        gu = torch.zeros((B, C), device='cuda').contiguous()
-        gk = torch.zeros((B, T, C), device='cuda').contiguous()
-        gv = torch.zeros((B, T, C), device='cuda').contiguous()
-        half_mode = (gy.dtype == torch.half)
-        wkv_cuda.backward(B, T, C, w, u, k, v, gy.contiguous(), gw, gu, gk, gv)
-        if half_mode:
-            gw = torch.sum(gw.half(), dim=0)
-            gu = torch.sum(gu.half(), dim=0)
-            return (None, None, None, gw.half(), gu.half(), gk.half(), gv.half())
-        else:
-            gw = torch.sum(gw, dim=0)
-            gu = torch.sum(gu, dim=0)
-            return (None, None, None, gw, gu, gk, gv)
-
-
-def RUN_CUDA(B, T, C, w, u, k, v):
-    return WKV.apply(B, T, C, w.cuda(), u.cuda(), k.cuda(), v.cuda())
 
 
 def q_shift(input, shift_pixel=1, gamma=1 / 4, patch_resolution=None):
