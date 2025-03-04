@@ -5,7 +5,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmseg.models.builder import BACKBONES
+from mmdet.models.builder import BACKBONES
 from ops.modules import MSDeformAttn
 from timm.models.layers import trunc_normal_
 from torch.nn.init import normal_
