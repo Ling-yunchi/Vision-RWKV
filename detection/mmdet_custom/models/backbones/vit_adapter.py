@@ -36,7 +36,7 @@ class ViT_Adapter(TIMMVisionTransformer):
 
         self.level_embed = nn.Parameter(torch.zeros(3, embed_dim))
         self.spm = SpatialPriorModule(
-            inplanes=conv_inplane, embed_dim=embed_dim, with_cp=False)
+            inplanes=conv_inplane, embed_dim=embed_dim)
         self.interactions = nn.Sequential(*[
             InteractionBlock(dim=embed_dim, num_heads=deform_num_heads, n_points=n_points,
                              init_values=init_values, drop_path=self.drop_path_rate,
